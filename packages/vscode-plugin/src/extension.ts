@@ -6,6 +6,8 @@ let historyManager: HistoryManager | undefined;
 let snippetEngine: SnippetEngine | undefined;
 let webviewManager: WebviewManager | undefined;
 let extensionUri: vscode.Uri | undefined;
+let statusBar: vscode.StatusBarItem | undefined;
+let statusBarInterval: ReturnType<typeof setInterval> | undefined;
 
 function readConfig(): {
   maxHistory: number;
@@ -62,6 +64,46 @@ function refreshConfig(): void {
       webviewManager = new WebviewManager({ historyManager, extensionUri });
     }
   }
+}
+
+function createStatusBar(): vscode.StatusBarItem {
+  const bar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  bar.text = '$(clipboard) Sentry Clip';
+  bar.tooltip = 'Sentry Clip: Click to open clipboard history';
+  bar.command = 'sentry-clip.showHistory';
+  bar.show();
+  return bar;
+}
+
+function updateStatusBar(): void {
+  if (!statusBar || !historyManager) return;
+  try {
+    const stats = historyManager.getStats();
+    const total = stats.totalClips;
+    const pinned = stats.pinnedClips;
+    statusBar.text = `$(clipboard) Sentry Clip · ${total} clips${pinned > 0 ? ' · ' + pinned + ' pinned' : ''}`;
+    statusBar.tooltip = `Sentry Clip: ${total} clips${pinned > 0 ? ', ' + pinned + ' pinned' : ''}. Click to open.`;
+  } catch {
+    statusBar.text = '$(clipboard) Sentry Clip';
+    statusBar.tooltip = 'Sentry Clip: Click to open clipboard history';
+  }
+}
+
+function startStatusBarRefresh(): void {
+  if (!statusBar || !historyManager) return;
+  // Stop existing interval if any
+  if (statusBarInterval) {
+    clearInterval(statusBarInterval);
+  }
+  // Initial update
+  updateStatusBar();
+  // Refresh every 10 seconds
+  statusBarInterval = setInterval(() => {
+    updateStatusBar();
+  }, 10000);
 }
 
 async function showQuickPickClips(
@@ -122,6 +164,10 @@ async function showQuickPickSnippets(): Promise<Snippet | undefined> {
 
 export function activate(context: vscode.ExtensionContext) {
   extensionUri = context.extensionUri;
+
+  // Create status bar
+  statusBar = createStatusBar();
+  context.subscriptions.push(statusBar);
 
   // Listen for settings changes
   const configChangeListener = vscode.workspace.onDidChangeConfiguration(
@@ -562,6 +608,10 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  if (statusBar) {
+    statusBar.dispose();
+    statusBar = undefined;
+  }
   if (webviewManager) {
     webviewManager.dispose();
     webviewManager = undefined;

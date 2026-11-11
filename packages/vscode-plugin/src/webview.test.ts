@@ -22,6 +22,8 @@ function makeDisposable() {
 }
 
 vi.mock('vscode', () => ({
+  StatusBarAlignment: { Right: 1 },
+  ViewColumn: { Two: 2 },
   window: {
     showInformationMessage: (...args: any[]) => {
       mockShowInformationMessage(...args);
@@ -45,6 +47,15 @@ vi.mock('vscode', () => ({
     },
     createWebviewPanel: (...args: any[]) => {
       return mockCreateWebviewPanel(...args);
+    },
+    createStatusBarItem: (...args: any[]) => {
+      return {
+        show: vi.fn(),
+        dispose: vi.fn(),
+        text: '',
+        tooltip: '',
+        command: '',
+      };
     },
   },
   commands: {
@@ -1012,8 +1023,8 @@ describe('Webview UI - Masking & Snippets Tests', () => {
 
     it('should add all disposables to context.subscriptions', () => {
       extension.activate(context);
-      // 10 command registrations + 1 config change listener = 11
-      expect(context.subscriptions.length).toBe(11);
+      // 10 command registrations + 1 config change listener + 1 status bar = 12
+      expect(context.subscriptions.length).toBe(12);
     });
 
     it('should handle clearHistory and update webview', async () => {

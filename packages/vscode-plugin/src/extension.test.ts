@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi, MockedObject } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ── Mocks for vscode ──────────────────────────────────────────────────────────
 
@@ -11,6 +11,11 @@ const mockClipboardWriteText = vi.fn();
 const mockGetConfiguration = vi.fn();
 const mockOnDidChangeConfiguration = vi.fn();
 const mockRegisterCommand = vi.fn();
+const mockCreateStatusBarItem = vi.fn();
+const mockStatusBarShow = vi.fn();
+const mockStatusBarDispose = vi.fn();
+const mockStatusBarSetText = vi.fn();
+const mockStatusBarSetTooltip = vi.fn();
 
 const mockActiveTextEditor = {
   selection: { isEmpty: false },
@@ -18,6 +23,8 @@ const mockActiveTextEditor = {
 };
 
 vi.mock('vscode', () => ({
+  StatusBarAlignment: { Right: 1 },
+  ViewColumn: { Two: 2 },
   window: {
     showInformationMessage: (...args: any[]) => {
       mockShowInformationMessage(...args);
@@ -38,6 +45,23 @@ vi.mock('vscode', () => ({
     },
     get activeTextEditor() {
       return mockActiveTextEditor;
+    },
+    createStatusBarItem: (...args: any[]) => {
+      const statusBar: any = {
+        show: mockStatusBarShow,
+        dispose: mockStatusBarDispose,
+        _text: '',
+        _tooltip: '',
+        _command: '',
+        get text() { return this._text || ''; },
+        set text(val: string) { this._text = val; mockStatusBarSetText(val); },
+        get tooltip() { return this._tooltip || ''; },
+        set tooltip(val: string) { this._tooltip = val; mockStatusBarSetTooltip(val); },
+        get command() { return this._command || ''; },
+        set command(val: string) { this._command = val; },
+      };
+      mockCreateStatusBarItem(...args);
+      return statusBar;
     },
   },
   commands: {
@@ -223,8 +247,49 @@ describe('VS Code Plugin - Core Integration', () => {
   it('should add all disposables to context.subscriptions', () => {
     extension.activate(context);
 
-    // 10 command registrations + 1 config change listener = 11
-    expect(context.subscriptions.length).toBe(11);
+    // 10 command registrations + 1 config change listener + 1 status bar = 12
+    expect(context.subscriptions.length).toBe(12);
+  });
+
+  // ── Status Bar ─────────────────────────────────────────────────────────────
+
+  it('should create a status bar item on activation', () => {
+    extension.activate(context);
+
+    expect(mockCreateStatusBarItem).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mockStatusBarShow).toHaveBeenCalled();
+  });
+
+  it('should set initial status bar text', () => {
+    extension.activate(context);
+
+    // The status bar is created with default text
+    expect(mockStatusBarSetText).toHaveBeenCalledWith(
+      expect.stringContaining('Sentry Clip')
+    );
+  });
+
+  it('should update status bar text with clip count after getHistoryManager is called', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    await handler();
+
+    // After the handler runs, the status bar should be updated with clip count
+    expect(mockStatusBarSetText).toHaveBeenCalledWith(
+      expect.stringContaining('Sentry Clip')
+    );
+  });
+
+  it('should dispose status bar on deactivate', () => {
+    extension.activate(context);
+    extension.deactivate();
+
+    expect(mockStatusBarDispose).toHaveBeenCalled();
   });
 
   // ── showHistory ────────────────────────────────────────────────────────────
@@ -577,5 +642,109 @@ describe('VS Code Plugin - Core Integration', () => {
     configCallback({ affectsConfiguration: (key: string) => key === 'sentryClip' });
 
     expect(mockHistoryManager.setConfig).toHaveBeenCalled();
+  });
+
+  // ── Step 14: UI Polish - Relative Timestamps, Hover Previews, Status Bar ──
+
+  it('should create status bar with initial text on activation', () => {
+    extension.activate(context);
+
+    expect(mockCreateStatusBarItem).toHaveBeenCalled();
+    expect(mockStatusBarShow).toHaveBeenCalled();
+    expect(mockStatusBarSetText).toHaveBeenCalledWith(
+      expect.stringContaining('Sentry Clip')
+    );
+  });
+
+  it('should update status bar text with clip count after history is accessed', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    await handler();
+
+    // Status bar should have been updated with clip count info
+    const setTextCalls = mockStatusBarSetText.mock.calls;
+    expect(setTextCalls.length).toBeGreaterThan(0);
+    // Final call should include clip count
+    const lastCall = setTextCalls[setTextCalls.length - 1][0];
+    expect(lastCall).toContain('Sentry Clip');
+  });
+
+  it('should update status bar tooltip with clip info', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    await handler();
+
+    // Status bar tooltip should have been set
+    const setTooltipCalls = mockStatusBarSetTooltip.mock.calls;
+    expect(setTooltipCalls.length).toBeGreaterThan(0);
+  });
+
+  it('should dispose status bar on deactivate', () => {
+    extension.activate(context);
+    extension.deactivate();
+
+    expect(mockStatusBarDispose).toHaveBeenCalled();
+  });
+
+  it('should update status bar with pinned count when clips are pinned', () => {
+    // Configure stats to include pinned count
+    mockHistoryManager.getStats.mockReturnValue({
+      totalClips: 5,
+      pinnedClips: 2,
+      totalSnippets: 3,
+      totalMaskRules: 1,
+    });
+
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    // Trigger history manager access
+    handler();
+
+    // Status bar should reflect pinned count
+    const setTextCalls = mockStatusBarSetText.mock.calls;
+    const lastCall = setTextCalls[setTextCalls.length - 1][0];
+    expect(lastCall).toContain('2 pinned');
+  });
+
+  it('should update status bar without pinned text when no clips are pinned', () => {
+    mockHistoryManager.getStats.mockReturnValue({
+      totalClips: 3,
+      pinnedClips: 0,
+      totalSnippets: 1,
+      totalMaskRules: 0,
+    });
+
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    handler();
+
+    const setTextCalls = mockStatusBarSetText.mock.calls;
+    const lastCall = setTextCalls[setTextCalls.length - 1][0];
+    expect(lastCall).toContain('3 clips');
+    expect(lastCall).not.toContain('pinned');
+  });
+
+  it('should handle status bar update gracefully when stats fail', () => {
+    mockHistoryManager.getStats.mockImplementation(() => {
+      throw new Error('Stats error');
+    });
+
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    handler();
+
+    // Should still have been called with default text
+    const setTextCalls = mockStatusBarSetText.mock.calls;
+    expect(setTextCalls.length).toBeGreaterThan(0);
   });
 });

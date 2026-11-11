@@ -209,6 +209,7 @@ export class WebviewManager {
       cursor: pointer;
       border-left: 2px solid transparent;
       transition: background 0.1s;
+      position: relative;
     }
     .clip-item:hover { background: var(--hover); }
     .clip-item.selected { background: var(--active); border-left-color: var(--accent); }
@@ -227,6 +228,50 @@ export class WebviewManager {
     }
     .pin-btn:hover { background: rgba(255,255,255,0.1); }
     .pin-btn.pinned { color: var(--pin); }
+
+    /* Hover preview tooltip */
+    .clip-item .hover-preview {
+      display: none;
+      position: absolute;
+      left: 0;
+      top: 100%;
+      z-index: 50;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 8px 10px;
+      max-width: 400px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      color: var(--fg);
+      pointer-events: none;
+    }
+    .clip-item:hover .hover-preview {
+      display: block;
+    }
+    .hover-preview .preview-label {
+      font-size: 10px;
+      color: var(--fg2);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .hover-preview .preview-content {
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .hover-preview .preview-meta {
+      font-size: 10px;
+      color: var(--fg2);
+      margin-top: 4px;
+      border-top: 1px solid var(--border);
+      padding-top: 4px;
+    }
 
     /* Empty state */
     .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--fg2); text-align: center; padding: 20px; }
@@ -459,15 +504,21 @@ export class WebviewManager {
       if (items.length === 0) {
         document.getElementById('clipList').innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div>' + (search ? 'No matching clips' : 'No clipboard history') + '</div></div>';
       } else {
-        document.getElementById('clipList').innerHTML = items.map(c =>
-          '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + c.id + '">' +
+        document.getElementById('clipList').innerHTML = items.map(c => {
+          const previewContent = c.content.length > 300 ? c.content.substring(0, 300) + '…' : c.content;
+          return '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + c.id + '">' +
             '<div class="clip-info">' +
-              '<div class="clip-text">' + esc(c.content) + '</div>' +
-              '<div class="clip-meta">' + (c.relativeTime || '') + '</div>' +
+              '<div class="clip-text" title="' + esc(c.content) + '">' + esc(c.content) + '</div>' +
+              '<div class="clip-meta" data-timestamp="' + c.createdAt + '">' + (c.relativeTime || '') + '</div>' +
             '</div>' +
             '<button class="pin-btn ' + (c.pinned ? 'pinned' : '') + '" data-pin="' + c.id + '">' + (c.pinned ? '★' : '☆') + '</button>' +
-          '</div>'
-        ).join('');
+            '<div class="hover-preview">' +
+              '<div class="preview-label">Full Content</div>' +
+              '<div class="preview-content">' + esc(previewContent) + '</div>' +
+              '<div class="preview-meta">' + (c.relativeTime || '') + (c.pinned ? ' · 📌 Pinned' : '') + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
         document.getElementById('clipList').querySelectorAll('.clip-item').forEach(el => {
           el.addEventListener('click', (e) => {
             if (e.target.classList.contains('pin-btn')) return;
@@ -787,6 +838,68 @@ export class WebviewManager {
     });
 
     vsc.postMessage({ type: 'requestInit' });
+
+    // ── Relative timestamp auto-refresh ──
+    // Update relative timestamps every 30 seconds
+    let timestampInterval: ReturnType<typeof setInterval> | null = null;
+
+    function updateTimestamps() {
+      vsc.postMessage({ type: 'requestTimestamps' });
+    }
+
+    function startTimestampRefresh() {
+      if (timestampInterval) clearInterval(timestampInterval);
+      timestampInterval = setInterval(updateTimestamps, 30000);
+    }
+
+    // Start refresh on init and when clips are updated
+    window.addEventListener('message', function(e) {
+      var m = e.data;
+      if (m.type === 'init') {
+        clips = m.clips || [];
+        snippets = m.snippets || [];
+        maskRules = m.maskRules || [];
+        builtinPlaceholders = m.builtinPlaceholders || [];
+        render();
+        renderMaskRules();
+        renderSnippets();
+        startTimestampRefresh();
+      }
+      else if (m.type === 'update') {
+        clips = m.clips || clips;
+        render();
+        startTimestampRefresh();
+      }
+      else if (m.type === 'clear') {
+        clips = [];
+        render();
+        if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
+      }
+      else if (m.type === 'toast') {
+        showToast(m.message, m.level);
+      }
+      else if (m.type === 'maskPreview') {
+        const output = document.getElementById('previewOutput');
+        output.innerHTML = m.preview || 'No masking applied';
+      }
+      else if (m.type === 'refresh') {
+        vsc.postMessage({ type: 'requestInit' });
+      }
+      else if (m.type === 'updateTimestamps') {
+        // Update relative timestamps for all clips
+        clips.forEach(function(c) {
+          if (c.id && m.timestamps && m.timestamps[c.id]) {
+            c.relativeTime = m.timestamps[c.id];
+          }
+        });
+        render();
+      }
+    });
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', function() {
+      if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
+    });
   </script>
 </body>
 </html>`;
@@ -797,6 +910,17 @@ export class WebviewManager {
       case 'requestInit':
         this.sendInitMessage();
         break;
+
+      case 'requestTimestamps': {
+        // Send updated relative timestamps for all clips
+        const timestamps: Record<string, string> = {};
+        const clips = this.historyManager.getClips({ limit: 200 });
+        clips.forEach((clip) => {
+          timestamps[clip.id] = this.historyManager.getRelativeTime(clip.createdAt);
+        });
+        this.panel?.webview.postMessage({ type: 'updateTimestamps', timestamps });
+        break;
+      }
 
       case 'copy': {
         try {

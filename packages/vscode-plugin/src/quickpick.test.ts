@@ -18,6 +18,8 @@ const mockActiveTextEditor = {
 };
 
 vi.mock('vscode', () => ({
+  StatusBarAlignment: { Right: 1 },
+  ViewColumn: { Two: 2 },
   window: {
     showInformationMessage: (...args: any[]) => {
       mockShowInformationMessage(...args);
@@ -38,6 +40,15 @@ vi.mock('vscode', () => ({
     },
     get activeTextEditor() {
       return mockActiveTextEditor;
+    },
+    createStatusBarItem: (...args: any[]) => {
+      return {
+        show: vi.fn(),
+        dispose: vi.fn(),
+        text: '',
+        tooltip: '',
+        command: '',
+      };
     },
   },
   commands: {
