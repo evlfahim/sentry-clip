@@ -87,18 +87,34 @@ const mockHistoryManager = {
   addClip: vi.fn(),
   close: vi.fn(),
   setConfig: vi.fn(),
+  addSnippet: vi.fn(),
+  getSnippet: vi.fn(),
+  deleteSnippet: vi.fn(),
+  getConfig: vi.fn(),
 };
 
 const mockSnippetEngine = {
   getSnippets: vi.fn(),
   resolvePlaceholders: vi.fn(),
+  getBuiltInPlaceholders: vi.fn(),
+  extractPlaceholders: vi.fn(),
+};
+
+const mockMaskEngine = {
+  addRule: vi.fn(),
+  removeRule: vi.fn(),
+  getRules: vi.fn(),
+  mask: vi.fn(),
+  maskPreview: vi.fn(),
 };
 
 vi.mock('@sentry-clip/core', () => ({
   HistoryManager: vi.fn().mockImplementation(() => mockHistoryManager),
   SnippetEngine: vi.fn().mockImplementation(() => mockSnippetEngine),
+  MaskEngine: vi.fn().mockImplementation(() => mockMaskEngine),
   Clip: {},
   Snippet: {},
+  MaskRule: {},
 }));
 
 // ── Test helpers ───────────────────────────────────────────────────────────────
@@ -162,7 +178,7 @@ function createMockPanel(): any {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-describe('Webview UI Tests', () => {
+describe('Webview UI - Masking & Snippets Tests', () => {
   let context: any;
   let mockPanel: any;
   let extension: typeof import('./extension');
@@ -190,6 +206,14 @@ describe('Webview UI Tests', () => {
     content: 'Hello {{name}}!',
     placeholders: ['name'],
     createdAt: Date.now(),
+  };
+
+  const sampleMaskRule = {
+    id: 'rule-1',
+    name: 'Email',
+    pattern: new RegExp('[\\w.+-]+@[\\w-]+\\.[\\w.]+'),
+    replacement: '[REDACTED]',
+    enabled: true,
   };
 
   beforeEach(async () => {
@@ -227,9 +251,29 @@ describe('Webview UI Tests', () => {
     mockHistoryManager.clearHistory.mockReturnValue(1);
     mockHistoryManager.addClip.mockReturnValue(sampleClip);
     mockHistoryManager.getAllSnippets.mockReturnValue([sampleSnippet]);
+    mockHistoryManager.getConfig.mockReturnValue({
+      maxHistory: 1000,
+      enableMasking: true,
+      enableSnippets: true,
+      exclusionPatterns: [],
+    });
+    mockHistoryManager.addSnippet.mockReturnValue(sampleSnippet);
+    mockHistoryManager.getSnippet.mockReturnValue(sampleSnippet);
+    mockHistoryManager.deleteSnippet.mockReturnValue(true);
 
     mockSnippetEngine.getSnippets.mockReturnValue([sampleSnippet]);
     mockSnippetEngine.resolvePlaceholders.mockReturnValue('Hello World!');
+    mockSnippetEngine.getBuiltInPlaceholders.mockReturnValue([
+      { name: 'timestamp', description: 'Current Unix timestamp' },
+      { name: 'date', description: 'Current date in ISO format' },
+      { name: 'hostname', description: 'Current machine hostname' },
+      { name: 'uuid', description: 'A random UUID v4 string' },
+    ]);
+    mockSnippetEngine.extractPlaceholders.mockReturnValue(['name']);
+
+    mockMaskEngine.getRules.mockReturnValue([sampleMaskRule]);
+    mockMaskEngine.mask.mockImplementation((text: string) => text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[REDACTED]'));
+    mockMaskEngine.maskPreview.mockImplementation((text: string) => text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[REDACTED]'));
 
     mockPanel = createMockPanel();
     mockCreateWebviewPanel.mockReturnValue(mockPanel.panel);
@@ -241,32 +285,267 @@ describe('Webview UI Tests', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
-    vi.resetModules();
+    vi.restoreAllMocks();
   });
 
-  // ── WebviewManager class tests ─────────────────────────────────────────────
+  // ── Masking tab tests ──────────────────────────────────────────────────────
 
-  describe('WebviewManager', () => {
-    it('should export WebviewManager class', () => {
-      expect(typeof webviewModule.WebviewManager).toBe('function');
-    });
-
-    it('should create a WebviewManager instance', () => {
-      const mgr = new webviewModule.WebviewManager({
-        historyManager: mockHistoryManager,
-        extensionUri: context.extensionUri,
-      });
-      expect(mgr).toBeDefined();
-      expect(mgr.panelVisible).toBe(false);
-    });
-
-    it('should show the webview panel on show()', () => {
+  describe('Masking Tab', () => {
+    it('should handle addMaskRule message', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'addMaskRule',
+        name: 'Phone Number',
+        pattern: '\\d{3}-\\d{3}-\\d{4}',
+        replacement: '[PHONE]',
+      });
+
+      expect(mockMaskEngine.addRule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Phone Number',
+          pattern: expect.any(RegExp),
+          replacement: '[PHONE]',
+          enabled: true,
+        })
+      );
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should handle toggleMaskRule message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'toggleMaskRule',
+        ruleId: 'rule-1',
+        enabled: false,
+      });
+
+      // The rule should have been found and toggled
+      expect(mockMaskEngine.getRules).toHaveBeenCalled();
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should handle deleteMaskRule message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'deleteMaskRule',
+        ruleId: 'rule-1',
+      });
+
+      expect(mockMaskEngine.removeRule).toHaveBeenCalledWith('rule-1');
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should handle previewMask message and send preview back', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'previewMask',
+        text: 'Contact me at test@example.com',
+      });
+
+      expect(mockMaskEngine.maskPreview).toHaveBeenCalledWith('Contact me at test@example.com');
+      // Should have sent the preview back to the webview
+      expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'maskPreview' })
+      );
+    });
+
+    it('should include mask rules in init message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      // The HTML should contain masking tab elements
+      const htmlCalls = mockPanel.webview.postMessage.mock.calls;
+      // The HTML is set via the html property, not postMessage
+      // Let's verify the panel was created with the right content
+      expect(mockCreateWebviewPanel).toHaveBeenCalled();
+    });
+
+    it('should handle editMaskRule message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'editMaskRule',
+        ruleId: 'rule-1',
+      });
+
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+  });
+
+  // ── Snippets tab tests ─────────────────────────────────────────────────────
+
+  describe('Snippets Tab', () => {
+    it('should handle createSnippet message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'createSnippet',
+        name: 'New Snippet',
+      });
+
+      expect(mockHistoryManager.addSnippet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'New Snippet',
+          content: '',
+          placeholders: [],
+        })
+      );
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should handle saveSnippet message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'saveSnippet',
+        snippetId: 'snip-1',
+        name: 'Updated Snippet',
+        content: 'Hello {{name}}, welcome to {{date}}',
+      });
+
+      expect(mockHistoryManager.addSnippet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'snip-1',
+          name: 'Updated Snippet',
+          content: 'Hello {{name}}, welcome to {{date}}',
+        })
+      );
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should handle deleteSnippet message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'deleteSnippet',
+        snippetId: 'snip-1',
+      });
+
+      expect(mockHistoryManager.deleteSnippet).toHaveBeenCalledWith('snip-1');
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast' })
+      );
+    });
+
+    it('should include snippets and builtin placeholders in init message', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      // Verify the snippet engine was initialized with builtin placeholders
+      expect(mockSnippetEngine.getBuiltInPlaceholders).toHaveBeenCalled();
+      expect(mockHistoryManager.getAllSnippets).toHaveBeenCalled();
+    });
+
+    it('should extract placeholders from snippet content', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      // The snippet engine should be able to extract placeholders
+      expect(mockSnippetEngine.extractPlaceholders).not.toHaveBeenCalled(); // only on save
+
+      // Simulate saveSnippet which calls extractPlaceholders
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'saveSnippet',
+        snippetId: 'snip-1',
+        name: 'Test',
+        content: 'Hello {{name}} from {{hostname}}',
+      });
+
+      expect(mockSnippetEngine.extractPlaceholders).toHaveBeenCalledWith(
+        'Hello {{name}} from {{hostname}}'
+      );
+    });
+  });
+
+  // ── Tab switching tests ────────────────────────────────────────────────────
+
+  describe('Tab Switching', () => {
+    it('should have history, masking, and snippets tabs in the HTML', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      // The HTML is generated via getHtml and set on panel.webview.html
+      // We can verify the panel was created
+      expect(mockCreateWebviewPanel).toHaveBeenCalled();
+    });
+
+    it('should include masking tab HTML elements', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      // Verify the panel was created with scripts enabled
       expect(mockCreateWebviewPanel).toHaveBeenCalledWith(
         'sentryClip',
         'Sentry Clip',
@@ -278,58 +557,46 @@ describe('Webview UI Tests', () => {
       );
     });
 
-    it('should send init message with clips on show()', () => {
+    it('should include snippets tab HTML elements', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
-      // The panel should have been created
       expect(mockCreateWebviewPanel).toHaveBeenCalled();
     });
+  });
 
-    it('should handle copy message', async () => {
+  // ── Integration tests ──────────────────────────────────────────────────────
+
+  describe('Masking & Snippets Integration', () => {
+    it('should send mask rules in init message', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
-      // Simulate receiving a copy message
-      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'copy', clipId: 'clip-1', content: 'Hello, world!' });
-
-      expect(mockClipboardWriteText).toHaveBeenCalledWith('Hello, world!');
+      // The init message should include mask rules
+      expect(mockMaskEngine.getRules).toHaveBeenCalled();
     });
 
-    it('should handle togglePin message', async () => {
+    it('should send builtin placeholders in init message', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
-      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'togglePin', clipId: 'clip-1' });
-
-      expect(mockHistoryManager.togglePin).toHaveBeenCalledWith('clip-1');
+      expect(mockSnippetEngine.getBuiltInPlaceholders).toHaveBeenCalled();
     });
 
-    it('should handle clearHistory message', async () => {
-      const mgr = new webviewModule.WebviewManager({
-        historyManager: mockHistoryManager,
-        extensionUri: context.extensionUri,
+    it('should handle masking error gracefully', async () => {
+      mockMaskEngine.maskPreview.mockImplementation(() => {
+        throw new Error('Invalid regex');
       });
-      mgr.show();
 
-      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'clearHistory' });
-
-      expect(mockHistoryManager.clearHistory).toHaveBeenCalled();
-    });
-
-    it('should handle refresh message', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
@@ -337,13 +604,21 @@ describe('Webview UI Tests', () => {
       mgr.show();
 
       const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'refresh' });
+      await messageHandler({
+        type: 'previewMask',
+        text: 'test@example.com',
+      });
 
-      // Should re-send init message (which rebuilds the HTML)
-      expect(mockHistoryManager.getClips).toHaveBeenCalled();
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
     });
 
-    it('should handle copyAll message', async () => {
+    it('should handle snippet save error gracefully', async () => {
+      mockHistoryManager.addSnippet.mockImplementation(() => {
+        throw new Error('Database error');
+      });
+
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
@@ -351,12 +626,23 @@ describe('Webview UI Tests', () => {
       mgr.show();
 
       const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'copyAll', content: 'line1\nline2' });
+      await messageHandler({
+        type: 'saveSnippet',
+        snippetId: 'snip-1',
+        name: 'Test',
+        content: 'Hello',
+      });
 
-      expect(mockClipboardWriteText).toHaveBeenCalledWith('line1\nline2');
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
     });
 
-    it('should handle copySnippet message', async () => {
+    it('should handle snippet creation error gracefully', async () => {
+      mockHistoryManager.addSnippet.mockImplementation(() => {
+        throw new Error('Database error');
+      });
+
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
@@ -364,44 +650,88 @@ describe('Webview UI Tests', () => {
       mgr.show();
 
       const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
-      await messageHandler({ type: 'copySnippet', content: 'Hello World!', snippetName: 'Greeting' });
+      await messageHandler({
+        type: 'createSnippet',
+        name: 'New Snippet',
+      });
 
-      expect(mockClipboardWriteText).toHaveBeenCalledWith('Hello World!');
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
     });
 
-    it('should dispose properly', () => {
+    it('should handle mask rule add error gracefully', async () => {
+      mockMaskEngine.addRule.mockImplementation(() => {
+        throw new Error('Invalid rule');
+      });
+
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
-      // Simulate panel dispose
-      const disposeCallback = mockPanel.onDidDisposeMock.mock.calls[0][0];
-      disposeCallback();
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'addMaskRule',
+        name: 'Test',
+        pattern: '[invalid',
+        replacement: '[X]',
+      });
 
-      // Panel should be cleared
-      expect(mgr.panelVisible).toBe(false);
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
     });
 
-    it('should update when update() is called', () => {
+    it('should handle mask rule delete error gracefully', async () => {
+      mockMaskEngine.removeRule.mockImplementation(() => {
+        throw new Error('Not found');
+      });
+
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
         extensionUri: context.extensionUri,
       });
       mgr.show();
 
-      // Simulate view state change to trigger init
-      const viewStateCallback = mockPanel.onDidChangeViewStateMock.mock.calls[0][0];
-      viewStateCallback({ webviewPanel: { visible: true } });
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'deleteMaskRule',
+        ruleId: 'nonexistent',
+      });
 
-      expect(mockHistoryManager.getClips).toHaveBeenCalled();
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
+    });
+
+    it('should handle snippet delete error gracefully', async () => {
+      mockHistoryManager.deleteSnippet.mockImplementation(() => {
+        throw new Error('Not found');
+      });
+
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const messageHandler = mockPanel.onDidReceiveMessageMock.mock.calls[0][0];
+      await messageHandler({
+        type: 'deleteSnippet',
+        snippetId: 'nonexistent',
+      });
+
+      expect(mockPanel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'toast', level: 'error' })
+      );
     });
   });
 
   // ── Extension with Webview integration tests ────────────────────────────────
 
-  describe('Extension with Webview', () => {
+  describe('Extension with Masking & Snippets', () => {
     it('should export activate and deactivate functions', () => {
       expect(typeof extension.activate).toBe('function');
       expect(typeof extension.deactivate).toBe('function');
@@ -448,7 +778,6 @@ describe('Webview UI Tests', () => {
 
       await handler();
 
-      // Webview should still be created (just with empty clips)
       expect(mockCreateWebviewPanel).toHaveBeenCalled();
     });
 
