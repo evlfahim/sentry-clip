@@ -1,36 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, MockedObject } from 'vitest';
 
-// vi.hoisted runs before vi.mock hoisting, so we can define shared mocks here
-const sharedMocks = vi.hoisted(() => ({
-  mockShowInformationMessage: vi.fn(),
-  mockShowWarningMessage: vi.fn(),
-  mockShowErrorMessage: vi.fn(),
-  mockShowQuickPick: vi.fn(),
-  mockShowInputBox: vi.fn(),
-  mockClipboardWriteText: vi.fn(),
-  mockGetConfiguration: vi.fn(),
-  mockOnDidChangeConfiguration: vi.fn(),
-  mockRegisterCommand: vi.fn(),
-  mockActiveTextEditor: {
-    selection: { isEmpty: false },
-    document: { getText: vi.fn() },
-  },
-}));
+// ── Mocks for vscode ──────────────────────────────────────────────────────────
 
-const {
-  mockShowInformationMessage,
-  mockShowWarningMessage,
-  mockShowErrorMessage,
-  mockShowQuickPick,
-  mockShowInputBox,
-  mockClipboardWriteText,
-  mockGetConfiguration,
-  mockOnDidChangeConfiguration,
-  mockRegisterCommand,
-  mockActiveTextEditor,
-} = sharedMocks;
+const mockShowInformationMessage = vi.fn();
+const mockShowWarningMessage = vi.fn();
+const mockShowErrorMessage = vi.fn();
+const mockShowQuickPick = vi.fn();
+const mockShowInputBox = vi.fn();
+const mockClipboardWriteText = vi.fn();
+const mockGetConfiguration = vi.fn();
+const mockOnDidChangeConfiguration = vi.fn();
+const mockRegisterCommand = vi.fn();
 
-// Mock vscode module before importing extension
+const mockActiveTextEditor = {
+  selection: { isEmpty: false },
+  document: { getText: vi.fn() },
+};
+
 vi.mock('vscode', () => ({
   window: {
     showInformationMessage: (...args: any[]) => {
@@ -38,20 +24,17 @@ vi.mock('vscode', () => ({
       return Promise.resolve(args[0] as string);
     },
     showWarningMessage: (...args: any[]) => {
-      mockShowWarningMessage(...args);
-      return Promise.resolve(args[0] as string);
+      return mockShowWarningMessage(...args);
     },
     showErrorMessage: (...args: any[]) => {
       mockShowErrorMessage(...args);
       return Promise.resolve(args[0] as string);
     },
     showQuickPick: (...args: any[]) => {
-      mockShowQuickPick(...args);
-      return Promise.resolve(null);
+      return mockShowQuickPick(...args);
     },
     showInputBox: (...args: any[]) => {
-      mockShowInputBox(...args);
-      return Promise.resolve(null);
+      return mockShowInputBox(...args);
     },
     get activeTextEditor() {
       return mockActiveTextEditor;
@@ -82,11 +65,75 @@ vi.mock('vscode', () => ({
   },
 }));
 
+// ── Mocks for @sentry-clip/core ───────────────────────────────────────────────
+
+const mockHistoryManager = {
+  getClips: vi.fn(),
+  getPinnedClips: vi.fn(),
+  searchClips: vi.fn(),
+  togglePin: vi.fn(),
+  getRelativeTime: vi.fn(),
+  getStats: vi.fn(),
+  clearHistory: vi.fn(),
+  getAllSnippets: vi.fn(),
+  addClip: vi.fn(),
+  close: vi.fn(),
+  setConfig: vi.fn(),
+};
+
+const mockSnippetEngine = {
+  getSnippets: vi.fn(),
+  resolvePlaceholders: vi.fn(),
+};
+
+vi.mock('@sentry-clip/core', () => ({
+  HistoryManager: vi.fn().mockImplementation(() => mockHistoryManager),
+  SnippetEngine: vi.fn().mockImplementation(() => mockSnippetEngine),
+  Clip: {},
+  Snippet: {},
+}));
+
 // Import after mocking
 import * as extension from './extension';
 
+// ── Test helpers ───────────────────────────────────────────────────────────────
+
+function getCommandHandler(name: string) {
+  const call = mockRegisterCommand.mock.calls.find(
+    (c: any[]) => c[0] === name
+  );
+  expect(call).toBeDefined(`Command ${name} was not registered`);
+  return call![1] as () => Promise<void>;
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
 describe('VS Code Plugin - Core Integration', () => {
   let context: any;
+
+  const sampleClip = {
+    id: 'clip-1',
+    content: 'Hello, world!',
+    createdAt: Date.now() - 60000,
+    pinned: false,
+    hash: 'abc123',
+  };
+
+  const samplePinnedClip = {
+    id: 'clip-2',
+    content: 'Pinned content',
+    createdAt: Date.now() - 120000,
+    pinned: true,
+    hash: 'def456',
+  };
+
+  const sampleSnippet = {
+    id: 'snip-1',
+    name: 'Greeting',
+    content: 'Hello {{name}}!',
+    placeholders: ['name'],
+    createdAt: Date.now(),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -110,86 +157,40 @@ describe('VS Code Plugin - Core Integration', () => {
     context = {
       subscriptions: [] as any[],
     };
+
+    // Default mock returns
+    mockHistoryManager.getClips.mockReturnValue([sampleClip]);
+    mockHistoryManager.getPinnedClips.mockReturnValue([samplePinnedClip]);
+    mockHistoryManager.searchClips.mockReturnValue([sampleClip]);
+    mockHistoryManager.getRelativeTime.mockReturnValue('1m ago');
+    mockHistoryManager.getStats.mockReturnValue({
+      totalClips: 1,
+      pinnedClips: 1,
+      totalSnippets: 0,
+      totalMaskRules: 0,
+    });
+    mockHistoryManager.clearHistory.mockReturnValue(1);
+    mockHistoryManager.addClip.mockReturnValue(sampleClip);
+
+    mockSnippetEngine.getSnippets.mockReturnValue([sampleSnippet]);
+    mockSnippetEngine.resolvePlaceholders.mockReturnValue('Hello World!');
+
+    // Snippets from history manager
+    mockHistoryManager.getAllSnippets.mockReturnValue([sampleSnippet]);
   });
 
   afterEach(() => {
-    // Reset modules so the singleton HistoryManager is cleared
     vi.resetModules();
   });
+
+  // ── Activation ─────────────────────────────────────────────────────────────
 
   it('should export activate and deactivate functions', () => {
     expect(typeof extension.activate).toBe('function');
     expect(typeof extension.deactivate).toBe('function');
   });
 
-  it('should register commands when activate is called', () => {
-    extension.activate(context);
-
-    // Should register all commands
-    const registeredCommands = mockRegisterCommand.mock.calls.map(
-      (call: any[]) => call[0]
-    );
-
-    expect(registeredCommands).toContain('sentry-clip.showHistory');
-    expect(registeredCommands).toContain('sentry-clip.copy');
-    expect(registeredCommands).toContain('sentry-clip.pin');
-    expect(registeredCommands).toContain('sentry-clip.search');
-    expect(registeredCommands).toContain('sentry-clip.showSnippets');
-    expect(registeredCommands).toContain('sentry-clip.copySelection');
-    expect(registeredCommands).toContain('sentry-clip.stats');
-    expect(registeredCommands).toContain('sentry-clip.clearHistory');
-
-    // Should add disposables to context
-    expect(context.subscriptions.length).toBeGreaterThan(0);
-  });
-
-  it('should listen for configuration changes', () => {
-    extension.activate(context);
-
-    expect(mockOnDidChangeConfiguration).toHaveBeenCalled();
-  });
-
-  it('should create HistoryManager with correct config on first use', async () => {
-    extension.activate(context);
-
-    // Trigger showHistory command
-    const showHistoryCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showHistory'
-    );
-    expect(showHistoryCall).toBeDefined();
-
-    // The command handler should create HistoryManager when called
-    const commandHandler = showHistoryCall![1];
-    expect(typeof commandHandler).toBe('function');
-
-    // Mock showQuickPick to return null (no selection)
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    // Should have called showQuickPick
-    expect(mockShowQuickPick).toHaveBeenCalled();
-  });
-
-  it('should show info message when no clips exist', async () => {
-    extension.activate(context);
-
-    const showHistoryCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showHistory'
-    );
-    const commandHandler = showHistoryCall![1];
-
-    // Mock showQuickPick to return null (no selection)
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    // Since HistoryManager creates an in-memory DB, there will be no clips
-    // The command should still work without errors
-    expect(mockShowQuickPick).toHaveBeenCalled();
-  });
-
-  it('should register all expected command names', () => {
+  it('should register all commands when activate is called', () => {
     extension.activate(context);
 
     const registeredCommands = mockRegisterCommand.mock.calls.map(
@@ -212,220 +213,78 @@ describe('VS Code Plugin - Core Integration', () => {
     }
   });
 
-  it('should handle clipboard writeText calls', async () => {
+  it('should listen for configuration changes', () => {
     extension.activate(context);
-
-    const copyCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.copy'
-    );
-    const commandHandler = copyCall![1];
-
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    expect(mockShowQuickPick).toHaveBeenCalled();
+    expect(mockOnDidChangeConfiguration).toHaveBeenCalled();
   });
 
-  it('should handle pin/unpin command', async () => {
+  it('should add all disposables to context.subscriptions', () => {
     extension.activate(context);
 
-    const pinCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.pin'
-    );
-    const commandHandler = pinCall![1];
-
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    expect(mockShowQuickPick).toHaveBeenCalled();
+    // 8 command registrations + 1 config change listener = 9
+    expect(context.subscriptions.length).toBe(9);
   });
 
-  it('should handle search command with input', async () => {
+  // ── showHistory ────────────────────────────────────────────────────────────
+
+  it('should show Quick Pick with combined pinned + unpinned clips', async () => {
     extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
-    const searchCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.search'
-    );
-    const commandHandler = searchCall![1];
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
 
-    // Mock input box to return a query
-    mockShowInputBox.mockResolvedValue('test query');
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    expect(mockShowInputBox).toHaveBeenCalledWith(
-      expect.objectContaining({ placeHolder: expect.stringContaining('Search') })
-    );
     expect(mockShowQuickPick).toHaveBeenCalled();
+    const items = mockShowQuickPick.mock.calls[0][0] as any[];
+    expect(items.length).toBe(2); // pinned + unpinned
+    // First item should be the pinned clip
+    expect(items[0].clip.id).toBe('clip-2');
   });
 
-  it('should handle search command with empty input', async () => {
+  it('should write selected clip to clipboard', async () => {
     extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
-    const searchCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.search'
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
+
+    expect(mockClipboardWriteText).toHaveBeenCalledWith(sampleClip.content);
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Copied')
     );
-    const commandHandler = searchCall![1];
+  });
 
-    mockShowInputBox.mockResolvedValue('');
+  it('should show info message when no clips exist', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
-    await commandHandler();
+    mockHistoryManager.getClips.mockReturnValue([]);
+    mockHistoryManager.getPinnedClips.mockReturnValue([]);
+    mockShowQuickPick.mockResolvedValue(null);
 
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('No clipboard history.');
     expect(mockShowQuickPick).not.toHaveBeenCalled();
-  });
-
-  it('should handle search command with null input', async () => {
-    extension.activate(context);
-
-    const searchCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.search'
-    );
-    const commandHandler = searchCall![1];
-
-    mockShowInputBox.mockResolvedValue(null);
-
-    await commandHandler();
-
-    expect(mockShowQuickPick).not.toHaveBeenCalled();
-  });
-
-  it('should handle copySelection with no active editor', async () => {
-    extension.activate(context);
-
-    const copySelectionCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.copySelection'
-    );
-    const commandHandler = copySelectionCall![1];
-
-    mockActiveTextEditor.selection = { isEmpty: true };
-    mockActiveTextEditor.document.getText = vi.fn().mockReturnValue('');
-
-    await commandHandler();
-
-    // Should show info message about no selection
-    expect(mockShowInformationMessage).toHaveBeenCalled();
-  });
-
-  it('should handle stats command', async () => {
-    extension.activate(context);
-
-    const statsCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.stats'
-    );
-    const commandHandler = statsCall![1];
-
-    await commandHandler();
-
-    // Should show information message with stats
-    expect(mockShowInformationMessage).toHaveBeenCalled();
-  });
-
-  it('should handle clearHistory with confirmation', async () => {
-    extension.activate(context);
-
-    const clearCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.clearHistory'
-    );
-    const commandHandler = clearCall![1];
-
-    mockShowWarningMessage.mockResolvedValue('Yes, clear all');
-
-    await commandHandler();
-
-    expect(mockShowWarningMessage).toHaveBeenCalled();
-    expect(mockShowInformationMessage).toHaveBeenCalled();
-  });
-
-  it('should handle clearHistory with cancellation', async () => {
-    extension.activate(context);
-
-    const clearCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.clearHistory'
-    );
-    const commandHandler = clearCall![1];
-
-    mockShowWarningMessage.mockResolvedValue(undefined);
-
-    await commandHandler();
-
-    expect(mockShowWarningMessage).toHaveBeenCalled();
-    // Should not show success message
-    const infoCalls = mockShowInformationMessage.mock.calls.filter(
-      (call: any[]) => call[0] && typeof call[0] === 'string' && call[0].includes('Cleared')
-    );
-    expect(infoCalls.length).toBe(0);
-  });
-
-  it('should show info message when no snippets exist', async () => {
-    extension.activate(context);
-
-    const snippetsCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showSnippets'
-    );
-    const commandHandler = snippetsCall![1];
-
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    // Should still call showQuickPick (or show info if no snippets)
-    expect(mockShowQuickPick).toHaveBeenCalled();
-  });
-
-  it('should have all commands registered in context.subscriptions', () => {
-    extension.activate(context);
-
-    expect(context.subscriptions.length).toBe(8); // 8 commands registered
   });
 
   it('should use correct placeHolder for showHistory', async () => {
     extension.activate(context);
-
-    const showHistoryCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showHistory'
-    );
-    const commandHandler = showHistoryCall![1];
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
+    await handler();
 
-    await commandHandler();
-
-    // Check that showQuickPick was called with correct options
     const quickPickOptions = mockShowQuickPick.mock.calls[0][1];
     expect(quickPickOptions.placeHolder).toContain('clipboard');
   });
 
-  it('should use correct placeHolder for search', async () => {
-    extension.activate(context);
-
-    const searchCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.search'
-    );
-    const commandHandler = searchCall![1];
-
-    mockShowInputBox.mockResolvedValue('test');
-    mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
-
-    const inputOptions = mockShowInputBox.mock.calls[0][0];
-    expect(inputOptions.placeHolder).toContain('Search');
-  });
-
   it('should use ignoreFocusOut for Quick Pick dialogs', async () => {
     extension.activate(context);
-
-    const showHistoryCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showHistory'
-    );
-    const commandHandler = showHistoryCall![1];
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
+    await handler();
 
     const quickPickOptions = mockShowQuickPick.mock.calls[0][1];
     expect(quickPickOptions.ignoreFocusOut).toBe(true);
@@ -433,26 +292,288 @@ describe('VS Code Plugin - Core Integration', () => {
 
   it('should use matchOnDetail and matchOnDescription for Quick Pick', async () => {
     extension.activate(context);
-
-    const showHistoryCall = mockRegisterCommand.mock.calls.find(
-      (call: any[]) => call[0] === 'sentry-clip.showHistory'
-    );
-    const commandHandler = showHistoryCall![1];
+    const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
-
-    await commandHandler();
+    await handler();
 
     const quickPickOptions = mockShowQuickPick.mock.calls[0][1];
     expect(quickPickOptions.matchOnDetail).toBe(true);
     expect(quickPickOptions.matchOnDescription).toBe(true);
   });
 
+  // ── copy ───────────────────────────────────────────────────────────────────
+
+  it('should show Quick Pick and copy selected clip', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.copy');
+
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
+
+    expect(mockClipboardWriteText).toHaveBeenCalledWith(sampleClip.content);
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('Copied to clipboard.');
+  });
+
+  it('should show info message when no clips exist', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.copy');
+
+    mockHistoryManager.getClips.mockReturnValue([]);
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('No clips to copy.');
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  // ── pin ────────────────────────────────────────────────────────────────────
+
+  it('should toggle pin on selected clip', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.pin');
+
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
+
+    expect(mockHistoryManager.togglePin).toHaveBeenCalledWith(sampleClip.id);
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Pinned')
+    );
+  });
+
+  it('should show info message when no clips exist', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.pin');
+
+    mockHistoryManager.getClips.mockReturnValue([]);
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('No clips to pin.');
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  // ── search ─────────────────────────────────────────────────────────────────
+
+  it('should handle search command with input', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.search');
+
+    mockShowInputBox.mockResolvedValue('test query');
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
+
+    expect(mockShowInputBox).toHaveBeenCalledWith(
+      expect.objectContaining({ placeHolder: expect.stringContaining('Search') })
+    );
+    expect(mockHistoryManager.searchClips).toHaveBeenCalledWith('test query');
+    expect(mockShowQuickPick).toHaveBeenCalled();
+  });
+
+  it('should handle search command with empty input', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.search');
+
+    mockShowInputBox.mockResolvedValue('');
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInputBox).toHaveBeenCalled();
+    expect(mockHistoryManager.searchClips).not.toHaveBeenCalled();
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('should handle search command with null input', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.search');
+
+    mockShowInputBox.mockResolvedValue(null);
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInputBox).toHaveBeenCalled();
+    expect(mockHistoryManager.searchClips).not.toHaveBeenCalled();
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('should write searched clip to clipboard when selected', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.search');
+
+    mockShowInputBox.mockResolvedValue('test');
+    mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
+    await handler();
+
+    expect(mockClipboardWriteText).toHaveBeenCalledWith(sampleClip.content);
+  });
+
+  it('should show info message when no search results', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.search');
+
+    mockShowInputBox.mockResolvedValue('no results');
+    mockHistoryManager.searchClips.mockReturnValue([]);
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('No matching clips found.');
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  // ── showSnippets ───────────────────────────────────────────────────────────
+
+  it('should show Quick Pick with snippets', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showSnippets');
+
+    mockShowQuickPick.mockResolvedValue({ snippet: sampleSnippet });
+    await handler();
+
+    expect(mockShowQuickPick).toHaveBeenCalled();
+  });
+
+  it('should resolve placeholders and copy to clipboard', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showSnippets');
+
+    mockShowQuickPick.mockResolvedValue({ snippet: sampleSnippet });
+    await handler();
+
+    expect(mockSnippetEngine.resolvePlaceholders).toHaveBeenCalledWith(sampleSnippet);
+    expect(mockClipboardWriteText).toHaveBeenCalledWith('Hello World!');
+  });
+
+  it('should show info message when no snippets exist', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showSnippets');
+
+    mockHistoryManager.getAllSnippets.mockReturnValue([]);
+    mockShowQuickPick.mockResolvedValue(null);
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith('No snippets defined.');
+    expect(mockShowQuickPick).not.toHaveBeenCalled();
+  });
+
+  // ── copySelection ──────────────────────────────────────────────────────────
+
+  it('should copy current editor selection to clipboard and history', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.copySelection');
+
+    mockShowQuickPick.mockResolvedValue(null);
+    await handler();
+
+    expect(mockHistoryManager.addClip).toHaveBeenCalledWith('selected text');
+    expect(mockClipboardWriteText).toHaveBeenCalledWith(sampleClip.content);
+  });
+
+  it('should handle copySelection with no active editor', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.copySelection');
+
+    mockActiveTextEditor.selection = { isEmpty: true };
+    mockActiveTextEditor.document.getText = vi.fn().mockReturnValue('');
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalled();
+    expect(mockHistoryManager.addClip).not.toHaveBeenCalled();
+  });
+
+  // ── stats ──────────────────────────────────────────────────────────────────
+
+  it('should handle stats command', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.stats');
+
+    await handler();
+
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Sentry Clip Stats')
+    );
+  });
+
+  // ── clearHistory ───────────────────────────────────────────────────────────
+
+  it('should handle clearHistory with confirmation', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.clearHistory');
+
+    mockShowWarningMessage.mockResolvedValue('Yes, clear all');
+
+    await handler();
+
+    expect(mockShowWarningMessage).toHaveBeenCalled();
+    expect(mockHistoryManager.clearHistory).toHaveBeenCalled();
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Cleared')
+    );
+  });
+
+  it('should handle clearHistory with cancellation', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.clearHistory');
+
+    mockShowWarningMessage.mockResolvedValue(undefined);
+
+    await handler();
+
+    expect(mockShowWarningMessage).toHaveBeenCalled();
+    expect(mockHistoryManager.clearHistory).not.toHaveBeenCalled();
+  });
+
+  // ── deactivate ─────────────────────────────────────────────────────────────
+
   it('should handle deactivate properly', () => {
     extension.activate(context);
-
-    // Access the internal historyManager through the module
-    // Since we can't directly access it, we verify deactivate runs without error
     expect(() => extension.deactivate()).not.toThrow();
+  });
+
+  it('should call historyManager.close on deactivate', async () => {
+    extension.activate(context);
+    // Trigger a command handler to initialize the historyManager singleton
+    const handler = getCommandHandler('sentry-clip.showHistory');
+    mockShowQuickPick.mockResolvedValue(null);
+    await handler();
+    // Now deactivate should close the historyManager
+    extension.deactivate();
+    expect(mockHistoryManager.close).toHaveBeenCalled();
+  });
+
+  // ── Error handling ─────────────────────────────────────────────────────────
+
+  it('should show error message when command throws', async () => {
+    extension.activate(context);
+    const handler = getCommandHandler('sentry-clip.showHistory');
+
+    mockHistoryManager.getClips.mockImplementation(() => {
+      throw new Error('Database error');
+    });
+
+    await handler();
+
+    expect(mockShowErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Sentry Clip error')
+    );
+  });
+
+  // ── Config refresh ─────────────────────────────────────────────────────────
+
+  it('should refresh config on settings change', () => {
+    extension.activate(context);
+
+    // Simulate a config change event
+    const configCallback = mockOnDidChangeConfiguration.mock.calls[0][0];
+    configCallback({ affectsConfiguration: (key: string) => key === 'sentryClip' });
+
+    expect(mockHistoryManager.setConfig).toHaveBeenCalled();
   });
 });
