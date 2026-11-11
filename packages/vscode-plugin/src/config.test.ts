@@ -102,10 +102,13 @@ const mockWebviewManager = {
   panelVisible: false,
 };
 
+vi.mock('./webview', () => ({
+  WebviewManager: WebviewManagerSpy.mockImplementation(() => mockWebviewManager),
+}));
+
 vi.mock('@sentry-clip/core', () => ({
   HistoryManager: HistoryManagerSpy.mockImplementation(() => mockHistoryManager),
   SnippetEngine: SnippetEngineSpy.mockImplementation(() => mockSnippetEngine),
-  WebviewManager: WebviewManagerSpy.mockImplementation(() => mockWebviewManager),
   Clip: {},
   Snippet: {},
 }));
@@ -483,13 +486,17 @@ describe('VS Code Plugin - Config Mapping', () => {
     mockShowQuickPick.mockResolvedValue(null);
     await handler();
 
+    // WebviewManager was created once during initial activation
+    expect(WebviewManagerSpy).toHaveBeenCalledTimes(1);
+
     // Simulate a config change event
     const configCallback = mockOnDidChangeConfiguration.mock.calls[0][0];
     configCallback({ affectsConfiguration: (key: string) => key === 'sentryClip' });
 
     // WebviewManager should be disposed first, then recreated
     expect(mockWebviewManager.dispose).toHaveBeenCalledTimes(1);
-    expect(WebviewManagerSpy).toHaveBeenCalledTimes(1);
+    // Now called twice: once on init, once on config change
+    expect(WebviewManagerSpy).toHaveBeenCalledTimes(2);
   });
 
   it('should rebuild SnippetEngine on config change', async () => {
