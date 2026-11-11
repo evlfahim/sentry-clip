@@ -17,6 +17,7 @@
     "vscode:test": "vitest run",
     "vscode:test-ui": "vitest run src/webview.test.ts",
     "vscode:prepublish": "npm run build",
+    "vscode:test-config": "vitest run src/config.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -111,6 +112,19 @@
           "type": "boolean",
           "default": true,
           "description": "Enable snippet support"
+        },
+        "sentryClip.exclusionPatterns": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Glob patterns for content to exclude from clipboard history"
+        },
+        "sentryClip.dbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom SQLite database path (empty = default location)"
         }
       }
     }

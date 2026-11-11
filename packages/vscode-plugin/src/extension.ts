@@ -7,16 +7,32 @@ let snippetEngine: SnippetEngine | undefined;
 let webviewManager: WebviewManager | undefined;
 let extensionUri: vscode.Uri | undefined;
 
+function readConfig(): {
+  maxHistory: number;
+  enableMasking: boolean;
+  enableSnippets: boolean;
+  exclusionPatterns: string[];
+  dbPath: string;
+} {
+  const config = vscode.workspace.getConfiguration('sentryClip');
+  return {
+    maxHistory: config.get<number>('maxHistory', 1000),
+    enableMasking: config.get<boolean>('enableMasking', true),
+    enableSnippets: config.get<boolean>('enableSnippets', true),
+    exclusionPatterns: config.get<string[]>('exclusionPatterns', []),
+    dbPath: config.get<string>('dbPath', ''),
+  };
+}
+
 function getHistoryManager(): HistoryManager {
   if (!historyManager) {
-    const config = vscode.workspace.getConfiguration('sentryClip');
-    const maxHistory = config.get<number>('maxHistory', 1000);
-    const enableMasking = config.get<boolean>('enableMasking', true);
-    const enableSnippets = config.get<boolean>('enableSnippets', true);
+    const cfg = readConfig();
     historyManager = new HistoryManager({
-      maxHistory,
-      enableMasking,
-      enableSnippets,
+      maxHistory: cfg.maxHistory,
+      enableMasking: cfg.enableMasking,
+      enableSnippets: cfg.enableSnippets,
+      exclusionPatterns: cfg.exclusionPatterns,
+      dbPath: cfg.dbPath || undefined,
     });
     snippetEngine = new SnippetEngine(historyManager.getAllSnippets());
     if (extensionUri) {
@@ -28,12 +44,23 @@ function getHistoryManager(): HistoryManager {
 
 function refreshConfig(): void {
   if (historyManager) {
-    const config = vscode.workspace.getConfiguration('sentryClip');
+    const cfg = readConfig();
     historyManager.setConfig({
-      maxHistory: config.get<number>('maxHistory', 1000),
-      enableMasking: config.get<boolean>('enableMasking', true),
-      enableSnippets: config.get<boolean>('enableSnippets', true),
+      maxHistory: cfg.maxHistory,
+      enableMasking: cfg.enableMasking,
+      enableSnippets: cfg.enableSnippets,
+      exclusionPatterns: cfg.exclusionPatterns,
+      dbPath: cfg.dbPath || undefined,
     });
+    // Rebuild snippet engine in case enableSnippets changed
+    if (snippetEngine) {
+      snippetEngine = new SnippetEngine(historyManager.getAllSnippets());
+    }
+    // Rebuild webview manager so its mask engine and snippet engine are fresh
+    if (webviewManager && extensionUri) {
+      webviewManager.dispose();
+      webviewManager = new WebviewManager({ historyManager, extensionUri });
+    }
   }
 }
 
