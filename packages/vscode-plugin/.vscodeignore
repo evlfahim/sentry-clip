@@ -1,0 +1,10 @@
+.vscodeignore
+.git/
+.vscode/
+*.log
+node_modules/
+dist/
+coverage/
+*.test.ts
+README.md
+LICENSE

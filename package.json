@@ -19,7 +19,8 @@
     "test:cli": "vitest run packages/core/src/cli.test.ts",
     "cli": "node packages/core/dist/cli.js",
     "build": "npm run build --workspaces",
-    "lint": "npm run lint --workspaces --if-present"
+    "lint": "npm run lint --workspaces --if-present",
+    "vscode:package": "npm run build --workspace=sentry-clip-vscode && node scripts/validate-vscode-extension.js"
   },
   "devDependencies": {
     "vitest": "^1.6.0",

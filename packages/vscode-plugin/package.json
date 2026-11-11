@@ -1,9 +1,14 @@
 {
   "name": "sentry-clip-vscode",
+  "publisher": "sentry-clip",
   "version": "0.1.0",
   "displayName": "Sentry Clip",
   "description": "Secure clipboard manager with masking, snippets, and search",
-  "main": "dist/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sentry-clip/sentry-clip.git"
+  },
+  "main": "./dist/extension.js",
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

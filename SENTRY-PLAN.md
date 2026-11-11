@@ -36,7 +36,7 @@ Core logic resides in `@sentry-clip/core` (pure Node.js/TS). The VS Code plugin 
 - [x] 5. Create snippet engine with placeholder resolution (e.g., {{date}}, {{cursor}}) and test dynamic rendering via `npm run test:snippets`
 - [x] 6. Implement history manager with pinning, max limits, and exclusion globs, verify logic via `npm run test:history`
 - [x] 7. Expose core via CLI interface (`npx sentry-clip`) and test list/search commands to ensure headless operation
-- [ ] 8. Scaffold VS Code plugin package, add `package.json` contributions, and verify build with `npm run vscode:package`
+- [x] 8. Scaffold VS Code plugin package, add `package.json` contributions, and verify build with `npm run vscode:package`
 - [ ] 9. Integrate core into plugin by wrapping commands and connecting to VS Code Quick Pick, test via `npm run vscode:test`
 - [ ] 10. Build Webview UI with search bar, clip list, and pin toggle, verify rendering via `npm run vscode:test-ui`
 - [ ] 11. Add masking preview and snippet placeholder editor in Webview, test UI interactions via `npm run vscode:test-ui-masking`
