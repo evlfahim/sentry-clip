@@ -9,6 +9,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:storage": "vitest run packages/core/src/storage.test.ts",
+    "test:masking": "vitest run packages/core/src/masking.test.ts",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present"
   },
