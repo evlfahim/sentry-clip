@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI interface for @sentry-clip/core
+ * CLI interface for @sentry-clip/core (headless operation).
  *
  * Usage:
  *   npx sentry-clip list [--pinned] [--limit N] [--offset N] [--json] [--db path]
@@ -11,17 +11,39 @@
  *   npx sentry-clip delete <id> [--db path]
  *   npx sentry-clip stats [--json] [--db path]
  *   npx sentry-clip clear [--db path]
+ *   npx sentry-clip snippets [--json] [--db path]
+ *   npx sentry-clip snippet-add <name> <content> [--json] [--db path]
+ *   npx sentry-clip snippet-delete <id> [--db path]
  *   npx sentry-clip help
+ *
+ * Database location: --db <path>, else $SENTRY_CLIP_DB, else ~/.sentry-clip/clips.db
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { HistoryManager } from './history';
 import { SnippetEngine } from './snippets';
-import { MaskEngine } from './masking';
-import { Snippet } from './models';
+import { Clip, Snippet } from './models';
 
-type CliCommand = 'list' | 'search' | 'add' | 'pin' | 'unpin' | 'delete' | 'stats' | 'clear' | 'help' | 'snippets' | 'snippet-add' | 'snippet-delete' | 'snippet-list';
+export const CLI_COMMANDS = [
+  'list',
+  'search',
+  'add',
+  'pin',
+  'unpin',
+  'delete',
+  'stats',
+  'clear',
+  'snippets',
+  'snippet-add',
+  'snippet-delete',
+  'help',
+] as const;
 
-interface CliOptions {
+export type CliCommand = (typeof CLI_COMMANDS)[number];
+
+export interface CliOptions {
   db?: string;
   json?: boolean;
   pinned?: boolean;
@@ -29,266 +51,194 @@ interface CliOptions {
   offset?: number;
 }
 
-function parseArgs(args: string[]): { command: CliCommand; positional: string[]; options: CliOptions } {
-  const result: CliCommand[] = ['list', 'search', 'add', 'pin', 'unpin', 'delete', 'stats', 'clear', 'help', 'snippets', 'snippet-add', 'snippet-delete'];
-  let command: CliCommand = 'help';
+export interface ParsedArgs {
+  command: string;
+  positional: string[];
+  options: CliOptions;
+}
+
+export interface CliIO {
+  stdout: (text: string) => void;
+  stderr: (text: string) => void;
+  env?: Record<string, string | undefined>;
+}
+
+/** Error raised for user-facing CLI failures; results in exit code 1. */
+export class CliError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CliError';
+  }
+}
+
+function parseNonNegativeInt(flag: string, value: string | undefined): number {
+  if (value === undefined) {
+    throw new CliError(`Missing value for ${flag}`);
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new CliError(`Invalid value for ${flag}: ${value} (expected a non-negative integer)`);
+  }
+  return parseInt(value, 10);
+}
+
+/**
+ * Parse argv (without node/script). The first non-option token is the command;
+ * all later non-option tokens are positional, so `search list` searches for "list".
+ * Everything after `--` is positional.
+ */
+export function parseArgs(args: string[]): ParsedArgs {
+  let command = '';
   const positional: string[] = [];
   const options: CliOptions = {};
+  let optionsEnded = false;
 
-  let i = 0;
-  while (i < args.length) {
+  for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--db' && i + 1 < args.length) {
-      options.db = args[i + 1];
-      i += 2;
+
+    if (!optionsEnded && arg === '--') {
+      optionsEnded = true;
       continue;
-    } else if (arg === '--json') {
-      options.json = true;
-      i++;
-    } else if (arg === '--pinned') {
-      options.pinned = true;
-      i++;
-    } else if (arg === '--limit' && i + 1 < args.length) {
-      options.limit = parseInt(args[i + 1], 10);
-      i += 2;
+    }
+
+    if (!optionsEnded && arg.startsWith('-') && arg.length > 1) {
+      switch (arg) {
+        case '--db':
+          if (i + 1 >= args.length) {
+            throw new CliError('Missing value for --db');
+          }
+          options.db = args[++i];
+          break;
+        case '--json':
+          options.json = true;
+          break;
+        case '--pinned':
+          options.pinned = true;
+          break;
+        case '--limit':
+          options.limit = parseNonNegativeInt('--limit', args[++i]);
+          break;
+        case '--offset':
+          options.offset = parseNonNegativeInt('--offset', args[++i]);
+          break;
+        case '-h':
+        case '--help':
+          command = 'help';
+          break;
+        default:
+          throw new CliError(`Unknown option: ${arg}`);
+      }
       continue;
-    } else if (arg === '--offset' && i + 1 < args.length) {
-      options.offset = parseInt(args[i + 1], 10);
-      i += 2;
-      continue;
-    } else if (result.includes(arg as CliCommand)) {
-      command = arg as CliCommand;
-      i++;
+    }
+
+    if (command === '') {
+      command = arg;
     } else {
       positional.push(arg);
-      i++;
     }
   }
 
-  return { command, positional, options };
+  return { command: command || 'help', positional, options };
 }
 
-function output(data: any): void {
-  if (typeof data === 'string') {
-    process.stdout.write(data + '\n');
-  } else {
-    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
-  }
+/** Resolve the SQLite database path used by the CLI. */
+export function resolveDbPath(dbOption: string | undefined, env: Record<string, string | undefined>): string {
+  if (dbOption) return dbOption;
+  if (env.SENTRY_CLIP_DB) return env.SENTRY_CLIP_DB;
+  return path.join(os.homedir(), '.sentry-clip', 'clips.db');
 }
 
-function error(msg: string): void {
-  process.stderr.write('Error: ' + msg + '\n');
-  process.exit(1);
+function ensureDbDir(dbPath: string): void {
+  if (dbPath === ':memory:') return;
+  const dir = path.dirname(path.resolve(dbPath));
+  fs.mkdirSync(dir, { recursive: true });
 }
 
-function createManager(dbPath?: string): HistoryManager {
-  const config: any = {};
-  if (dbPath) {
-    config.dbPath = dbPath;
-  }
-  return new HistoryManager(config);
+function preview(content: string): string {
+  const singleLine = content.replace(/\r?\n/g, ' ');
+  return singleLine.length > 100 ? singleLine.substring(0, 100) + '...' : singleLine;
 }
 
-function handleList(manager: HistoryManager, options: CliOptions): void {
-  const clips = manager.getClips({
-    pinned: options.pinned,
-    limit: options.limit,
-    offset: options.offset,
-  });
-
-  if (options.json) {
-    output(clips);
-    return;
-  }
-
-  if (clips.length === 0) {
-    console.log('No clips found.');
-    return;
-  }
-
-  console.log(`Found ${clips.length} clip(s):\n`);
+function formatClips(manager: HistoryManager, clips: Clip[]): string {
+  const lines: string[] = [];
   for (const clip of clips) {
     const time = manager.getRelativeTime(clip.createdAt);
     const pinLabel = clip.pinned ? '[PINNED] ' : '';
-    const contentPreview = clip.content.length > 100 ? clip.content.substring(0, 100) + '...' : clip.content;
-    console.log(`  ${pinLabel}${clip.id}  (${time})`);
-    console.log(`    ${contentPreview}`);
-    console.log('');
+    lines.push(`  ${pinLabel}${clip.id}  (${time})`);
+    lines.push(`    ${preview(clip.content)}`);
+    lines.push('');
   }
+  return lines.join('\n');
 }
 
-function handleSearch(manager: HistoryManager, query: string, options: CliOptions): void {
-  const clips = manager.searchClipsAdvanced({
-    query,
-    pinned: options.pinned,
-    limit: options.limit,
-    offset: options.offset,
-  });
-
-  if (options.json) {
-    output(clips);
-    return;
-  }
-
-  if (clips.length === 0) {
-    console.log(`No clips found matching "${query}".`);
-    return;
-  }
-
-  console.log(`Found ${clips.length} clip(s) matching "${query}":\n`);
-  for (const clip of clips) {
-    const time = manager.getRelativeTime(clip.createdAt);
-    const pinLabel = clip.pinned ? '[PINNED] ' : '';
-    const contentPreview = clip.content.length > 100 ? clip.content.substring(0, 100) + '...' : clip.content;
-    console.log(`  ${pinLabel}${clip.id}  (${time})`);
-    console.log(`    ${contentPreview}`);
-    console.log('');
-  }
+function paginate<T>(items: T[], options: CliOptions): T[] {
+  const start = options.offset ?? 0;
+  const end = options.limit !== undefined ? start + options.limit : undefined;
+  return items.slice(start, end);
 }
 
-function handleAdd(manager: HistoryManager, content: string, options: CliOptions): void {
-  const clip = manager.addClip(content);
+/**
+ * Search clips: FTS5 first, falling back to a case-insensitive substring match
+ * when FTS finds nothing or rejects the query syntax (e.g. "foo-bar", "a*b(").
+ */
+export function searchClips(manager: HistoryManager, query: string, options: CliOptions): Clip[] {
+  const pinned = options.pinned ? true : undefined;
 
-  if (!clip.id) {
-    error('Failed to add clip (empty content or excluded by patterns).');
+  let ftsResults: Clip[] = [];
+  try {
+    ftsResults = manager.searchClipsAdvanced({ query, pinned });
+  } catch {
+    ftsResults = [];
   }
 
-  if (options.json) {
-    output(clip);
-    return;
+  if (ftsResults.length > 0) {
+    return paginate(ftsResults, options);
   }
 
-  console.log(`Clip added: ${clip.id}`);
-  console.log(`  Content: ${clip.content}`);
-  console.log(`  Pinned: ${clip.pinned}`);
-  console.log(`  Hash: ${clip.hash}`);
+  const needle = query.toLowerCase();
+  const substringResults = manager
+    .getClips({ pinned })
+    .filter((clip) => clip.content.toLowerCase().includes(needle));
+  return paginate(substringResults, options);
 }
 
-function handlePin(manager: HistoryManager, clipId: string): void {
-  const clip = manager.getClips().find((c) => c.id === clipId);
-  if (!clip) {
-    error(`Clip not found: ${clipId}`);
-  }
-  manager.pinClip(clipId);
-  console.log(`Pinned: ${clipId}`);
+function findClip(manager: HistoryManager, clipId: string): Clip | undefined {
+  return manager.getClips().find((c) => c.id === clipId);
 }
 
-function handleUnpin(manager: HistoryManager, clipId: string): void {
-  const clip = manager.getClips().find((c) => c.id === clipId);
-  if (!clip) {
-    error(`Clip not found: ${clipId}`);
+function requireArg(positional: string[], usage: string): string {
+  if (positional.length === 0 || positional[0].trim() === '') {
+    throw new CliError(`Usage: ${usage}`);
   }
-  manager.unpinClip(clipId);
-  console.log(`Unpinned: ${clipId}`);
+  return positional[0];
 }
 
-function handleDelete(manager: HistoryManager, clipId: string): void {
-  const deleted = manager.deleteClip(clipId);
-  if (!deleted) {
-    error(`Clip not found: ${clipId}`);
-  }
-  console.log(`Deleted: ${clipId}`);
-}
-
-function handleStats(manager: HistoryManager, options: CliOptions): void {
-  const stats = manager.getStats();
-  if (options.json) {
-    output(stats);
-    return;
-  }
-  console.log('Sentry-Clip Stats:');
-  console.log(`  Total clips: ${stats.totalClips}`);
-  console.log(`  Pinned clips: ${stats.pinnedClips}`);
-  console.log(`  Total snippets: ${stats.totalSnippets}`);
-  console.log(`  Total mask rules: ${stats.totalMaskRules}`);
-}
-
-function handleClear(manager: HistoryManager): void {
-  const count = manager.clearHistory();
-  console.log(`Cleared ${count} clip(s).`);
-}
-
-function handleSnippets(manager: HistoryManager, options: CliOptions): void {
-  const snippets = manager.getAllSnippets();
-
-  if (options.json) {
-    output(snippets);
-    return;
-  }
-
-  if (snippets.length === 0) {
-    console.log('No snippets found.');
-    return;
-  }
-
-  console.log(`Found ${snippets.length} snippet(s):\n`);
-  for (const snippet of snippets) {
-    console.log(`  ${snippet.id}  (${snippet.name})`);
-    console.log(`    ${snippet.content}`);
-    if (snippet.placeholders.length > 0) {
-      console.log(`    Placeholders: ${snippet.placeholders.join(', ')}`);
-    }
-    console.log('');
-  }
-}
-
-function handleSnippetAdd(manager: HistoryManager, args: string[], json: boolean): void {
-  if (args.length < 2) {
-    error('Usage: sentry-clip snippet-add <name> <content>');
-  }
-  const name = args[0];
-  const content = args.slice(1).join(' ');
-  const snippetEngine = new SnippetEngine();
-  const snippet: Snippet = {
-    id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-    name,
-    content,
-    placeholders: snippetEngine.extractPlaceholders(content),
-    createdAt: Date.now(),
-  };
-  manager.addSnippet(snippet);
-  console.log(`Snippet added: ${snippet.id} (${snippet.name})`);
-  if (json) {
-    output(snippet);
-  }
-}
-
-function handleSnippetDelete(manager: HistoryManager, snippetId: string): void {
-  const before = manager.getSnippet(snippetId);
-  if (!before) {
-    error(`Snippet not found: ${snippetId}`);
-  }
-  manager.deleteSnippet(snippetId);
-  console.log(`Deleted snippet: ${snippetId}`);
-}
-
-function handleHelp(): void {
-  console.log(`
+export const HELP_TEXT = `
 Sentry-Clip CLI - Secure clipboard manager
 
 Usage:
   npx sentry-clip <command> [options]
 
 Commands:
-  list              List all clips (or pinned with --pinned)
-  search <query>    Search clips by content
-  add <content>     Add a new clip
-  pin <id>          Pin a clip by ID
-  unpin <id>        Unpin a clip by ID
-  delete <id>       Delete a clip by ID
-  stats             Show clip/snippet/mask stats
-  clear             Clear all clips
-  snippets          List all snippets
+  list                          List all clips (or pinned with --pinned)
+  search <query>                Search clips by content
+  add <content>                 Add a new clip
+  pin <id>                      Pin a clip by ID
+  unpin <id>                    Unpin a clip by ID
+  delete <id>                   Delete a clip by ID
+  stats                         Show clip/snippet/mask stats
+  clear                         Clear all clips
+  snippets                      List all snippets
   snippet-add <name> <content>  Add a snippet
-  snippet-delete <id>          Delete a snippet
-  help              Show this help message
+  snippet-delete <id>           Delete a snippet
+  help                          Show this help message
 
 Options:
-  --db <path>       SQLite database path (default: in-memory)
+  --db <path>       SQLite database path (default: $SENTRY_CLIP_DB or ~/.sentry-clip/clips.db)
   --json            Output results as JSON
   --pinned          Filter to pinned clips only
   --limit <N>       Limit number of results
   --offset <N>      Offset for pagination
+  --                Treat all following arguments as positional
 
 Examples:
   npx sentry-clip list
@@ -297,85 +247,178 @@ Examples:
   npx sentry-clip pin abc123
   npx sentry-clip stats --json
   npx sentry-clip list --pinned --limit 10
-`);
+`;
+
+function execute(manager: HistoryManager, parsed: ParsedArgs, out: (text: string) => void): void {
+  const { command, positional, options } = parsed;
+  const json = (data: unknown) => out(JSON.stringify(data, null, 2));
+
+  switch (command as CliCommand) {
+    case 'list': {
+      const all = manager.getClips({ pinned: options.pinned ? true : undefined });
+      const clips = paginate(all, options);
+      if (options.json) return json(clips);
+      if (clips.length === 0) return out('No clips found.');
+      out(`Found ${clips.length} clip(s):\n`);
+      out(formatClips(manager, clips));
+      return;
+    }
+
+    case 'search': {
+      requireArg(positional, 'sentry-clip search <query>');
+      const query = positional.join(' ');
+      const clips = searchClips(manager, query, options);
+      if (options.json) return json(clips);
+      if (clips.length === 0) return out(`No clips found matching "${query}".`);
+      out(`Found ${clips.length} clip(s) matching "${query}":\n`);
+      out(formatClips(manager, clips));
+      return;
+    }
+
+    case 'add': {
+      requireArg(positional, 'sentry-clip add <content>');
+      const clip = manager.addClip(positional.join(' '));
+      if (!clip.id) {
+        throw new CliError('Failed to add clip (empty content or excluded by patterns).');
+      }
+      if (options.json) return json(clip);
+      out(`Clip added: ${clip.id}`);
+      out(`  Content: ${clip.content}`);
+      out(`  Pinned: ${clip.pinned}`);
+      out(`  Hash: ${clip.hash}`);
+      return;
+    }
+
+    case 'pin': {
+      const clipId = requireArg(positional, 'sentry-clip pin <id>');
+      if (!findClip(manager, clipId)) throw new CliError(`Clip not found: ${clipId}`);
+      manager.pinClip(clipId);
+      if (options.json) return json({ id: clipId, pinned: true });
+      out(`Pinned: ${clipId}`);
+      return;
+    }
+
+    case 'unpin': {
+      const clipId = requireArg(positional, 'sentry-clip unpin <id>');
+      if (!findClip(manager, clipId)) throw new CliError(`Clip not found: ${clipId}`);
+      manager.unpinClip(clipId);
+      if (options.json) return json({ id: clipId, pinned: false });
+      out(`Unpinned: ${clipId}`);
+      return;
+    }
+
+    case 'delete': {
+      const clipId = requireArg(positional, 'sentry-clip delete <id>');
+      if (!manager.deleteClip(clipId)) throw new CliError(`Clip not found: ${clipId}`);
+      if (options.json) return json({ id: clipId, deleted: true });
+      out(`Deleted: ${clipId}`);
+      return;
+    }
+
+    case 'stats': {
+      const stats = manager.getStats();
+      if (options.json) return json(stats);
+      out('Sentry-Clip Stats:');
+      out(`  Total clips: ${stats.totalClips}`);
+      out(`  Pinned clips: ${stats.pinnedClips}`);
+      out(`  Total snippets: ${stats.totalSnippets}`);
+      out(`  Total mask rules: ${stats.totalMaskRules}`);
+      return;
+    }
+
+    case 'clear': {
+      const count = manager.clearHistory();
+      if (options.json) return json({ cleared: count });
+      out(`Cleared ${count} clip(s).`);
+      return;
+    }
+
+    case 'snippets': {
+      const snippets = manager.getAllSnippets();
+      if (options.json) return json(snippets);
+      if (snippets.length === 0) return out('No snippets found.');
+      out(`Found ${snippets.length} snippet(s):\n`);
+      for (const snippet of snippets) {
+        out(`  ${snippet.id}  (${snippet.name})`);
+        out(`    ${preview(snippet.content)}`);
+        if (snippet.placeholders.length > 0) {
+          out(`    Placeholders: ${snippet.placeholders.join(', ')}`);
+        }
+        out('');
+      }
+      return;
+    }
+
+    case 'snippet-add': {
+      if (positional.length < 2) {
+        throw new CliError('Usage: sentry-clip snippet-add <name> <content>');
+      }
+      const name = positional[0];
+      const content = positional.slice(1).join(' ');
+      const snippet: Snippet = {
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        name,
+        content,
+        placeholders: new SnippetEngine().extractPlaceholders(content),
+        createdAt: Date.now(),
+      };
+      manager.addSnippet(snippet);
+      if (options.json) return json(snippet);
+      out(`Snippet added: ${snippet.id} (${snippet.name})`);
+      return;
+    }
+
+    case 'snippet-delete': {
+      const snippetId = requireArg(positional, 'sentry-clip snippet-delete <id>');
+      if (!manager.deleteSnippet(snippetId)) throw new CliError(`Snippet not found: ${snippetId}`);
+      if (options.json) return json({ id: snippetId, deleted: true });
+      out(`Deleted snippet: ${snippetId}`);
+      return;
+    }
+
+    default:
+      throw new CliError(`Unknown command: ${command}. Run "sentry-clip help" for usage.`);
+  }
 }
 
-// Main entry point
-const { command, positional, options } = parseArgs(process.argv.slice(2));
+/**
+ * Run the CLI with the given arguments. Returns the process exit code
+ * (0 = success, 1 = error). Never calls process.exit, so it is safe to embed.
+ */
+export function runCli(argv: string[], io?: Partial<CliIO>): number {
+  const stdout = io?.stdout ?? ((text: string) => process.stdout.write(text));
+  const stderr = io?.stderr ?? ((text: string) => process.stderr.write(text));
+  const env = io?.env ?? process.env;
+  const out = (text: string) => stdout(text + '\n');
 
-let manager: HistoryManager | null = null;
+  let manager: HistoryManager | null = null;
+  try {
+    const parsed = parseArgs(argv);
 
-try {
-  switch (command) {
-    case 'list':
-      manager = createManager(options.db);
-      handleList(manager, options);
-      break;
-    case 'search':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip search <query>');
-      }
-      manager = createManager(options.db);
-      handleSearch(manager, positional[0], options);
-      break;
-    case 'add':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip add <content>');
-      }
-      manager = createManager(options.db);
-      handleAdd(manager, positional.join(' '), options);
-      break;
-    case 'pin':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip pin <id>');
-      }
-      manager = createManager(options.db);
-      handlePin(manager, positional[0]);
-      break;
-    case 'unpin':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip unpin <id>');
-      }
-      manager = createManager(options.db);
-      handleUnpin(manager, positional[0]);
-      break;
-    case 'delete':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip delete <id>');
-      }
-      manager = createManager(options.db);
-      handleDelete(manager, positional[0]);
-      break;
-    case 'stats':
-      manager = createManager(options.db);
-      handleStats(manager, options);
-      break;
-    case 'clear':
-      manager = createManager(options.db);
-      handleClear(manager);
-      break;
-    case 'snippets':
-      manager = createManager(options.db);
-      handleSnippets(manager, options);
-      break;
-    case 'snippet-add':
-      manager = createManager(options.db);
-      handleSnippetAdd(manager, positional, options.json || false);
-      break;
-    case 'snippet-delete':
-      if (positional.length === 0) {
-        error('Usage: sentry-clip snippet-delete <id>');
-      }
-      manager = createManager(options.db);
-      handleSnippetDelete(manager, positional[0]);
-      break;
-    case 'help':
-    default:
-      handleHelp();
-      break;
+    if (parsed.command === 'help') {
+      out(HELP_TEXT);
+      return 0;
+    }
+    if (!(CLI_COMMANDS as readonly string[]).includes(parsed.command)) {
+      throw new CliError(`Unknown command: ${parsed.command}. Run "sentry-clip help" for usage.`);
+    }
+
+    const dbPath = resolveDbPath(parsed.options.db, env);
+    ensureDbDir(dbPath);
+    manager = new HistoryManager({ dbPath });
+    execute(manager, parsed, out);
+    return 0;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    stderr('Error: ' + message + '\n');
+    return 1;
+  } finally {
+    if (manager) {
+      manager.close();
+    }
   }
-} finally {
-  if (manager) {
-    manager.close();
-  }
+}
+
+if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
+  process.exitCode = runCli(process.argv.slice(2));
 }

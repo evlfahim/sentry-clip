@@ -16,6 +16,8 @@
     "test:masking": "vitest run packages/core/src/masking.test.ts",
     "test:snippets": "vitest run packages/core/src/snippets.test.ts",
     "test:history": "vitest run packages/core/src/history.test.ts",
+    "test:cli": "vitest run packages/core/src/cli.test.ts",
+    "cli": "node packages/core/dist/cli.js",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present"
   },
