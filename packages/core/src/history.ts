@@ -73,7 +73,7 @@ export class HistoryManager {
       exclusionPatterns: [],
       ...config,
     };
-    this.storage = new ClipStorage();
+    this.storage = new ClipStorage(this.config.dbPath);
     this.maskEngine = new MaskEngine();
   }
 

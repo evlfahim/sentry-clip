@@ -6,6 +6,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "bin": {
+    "sentry-clip": "./packages/core/dist/cli.js"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",

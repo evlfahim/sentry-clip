@@ -36,4 +36,5 @@ export interface ClipHistoryConfig {
   enableMasking: boolean;
   enableSnippets: boolean;
   exclusionPatterns: string[];
+  dbPath?: string;
 }

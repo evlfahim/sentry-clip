@@ -4,6 +4,9 @@
   "description": "Core clipboard manager logic with masking, snippets, and history",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "sentry-clip": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
