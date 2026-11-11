@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:storage": "vitest run packages/core/src/storage.test.ts",
     "test:masking": "vitest run packages/core/src/masking.test.ts",
+    "test:snippets": "vitest run packages/core/src/snippets.test.ts",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present"
   },

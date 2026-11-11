@@ -33,7 +33,7 @@ Core logic resides in `@sentry-clip/core` (pure Node.js/TS). The VS Code plugin 
 - [x] 2. Implement core data models (Clip, Snippet, MaskRule, Pin) and export types, verify with `node -e "require('./packages/core/dist/models')"`
 - [x] 3. Build storage layer with SQLite indexing for search, test persistence and query speed via `npm run test:storage`
 - [x] 4. Develop sensitive-data masking engine with regex support and test against sample PII tokens via `npm run test:masking`
-- [ ] 5. Create snippet engine with placeholder resolution (e.g., {{date}}, {{cursor}}) and test dynamic rendering via `npm run test:snippets`
+- [x] 5. Create snippet engine with placeholder resolution (e.g., {{date}}, {{cursor}}) and test dynamic rendering via `npm run test:snippets`
 - [ ] 6. Implement history manager with pinning, max limits, and exclusion globs, verify logic via `npm run test:history`
 - [ ] 7. Expose core via CLI interface (`npx sentry-clip`) and test list/search commands to ensure headless operation
 - [ ] 8. Scaffold VS Code plugin package, add `package.json` contributions, and verify build with `npm run vscode:package`
