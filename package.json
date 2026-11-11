@@ -1,0 +1,23 @@
+{
+  "name": "sentry-clip",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A secure, modular clipboard manager with regex-based sensitive data masking, dynamic snippets with placeholders, and robust search",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

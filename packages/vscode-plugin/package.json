@@ -1,0 +1,73 @@
+{
+  "name": "sentry-clip-vscode",
+  "version": "0.1.0",
+  "displayName": "Sentry Clip",
+  "description": "Secure clipboard manager with masking, snippets, and search",
+  "main": "dist/extension.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "vscode:prepublish": "npm run build",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@sentry-clip/core": "file:../core"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sentry-clip.showHistory",
+        "title": "Sentry Clip: Show Clipboard History"
+      },
+      {
+        "command": "sentry-clip.copy",
+        "title": "Sentry Clip: Copy to Clipboard"
+      },
+      {
+        "command": "sentry-clip.pin",
+        "title": "Sentry Clip: Pin/Unpin Clip"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "sentry-clip.showHistory",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Sentry Clip",
+      "properties": {
+        "sentryClip.maxHistory": {
+          "type": "number",
+          "default": 1000,
+          "description": "Maximum number of clipboard history entries to keep"
+        },
+        "sentryClip.enableMasking": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable sensitive data masking"
+        },
+        "sentryClip.enableSnippets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable snippet support"
+        }
+      }
+    }
+  }
+}

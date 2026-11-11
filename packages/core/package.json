@@ -1,0 +1,21 @@
+{
+  "name": "@sentry-clip/core",
+  "version": "0.1.0",
+  "description": "Core clipboard manager logic with masking, snippets, and history",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "typescript": "^5.3.3",
+    "vitest": "^1.6.0"
+  }
+}

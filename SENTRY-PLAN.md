@@ -29,7 +29,7 @@ TypeScript, Node.js, SQLite, Tauri (optional desktop wrapper), VS Code Extension
 Core logic resides in `@sentry-clip/core` (pure Node.js/TS). The VS Code plugin (`packages/vscode-plugin`) imports the core, bridges VS Code APIs (`vscode.window`, `vscode.extensions`) to the core, and renders the UI via a Webview. This separation allows the core to be reused in a Tauri desktop app or other tools without VS Code dependencies.
 
 ## Steps
-- [ ] 1. Initialize monorepo with `packages/core` and `packages/vscode-plugin`, add Vitest, TypeScript, and SQLite, then run `npm test` to verify setup
+- [x] 1. Initialize monorepo with `packages/core` and `packages/vscode-plugin`, add Vitest, TypeScript, and SQLite, then run `npm test` to verify setup
 - [ ] 2. Implement core data models (Clip, Snippet, MaskRule, Pin) and export types, verify with `node -e "require('./packages/core/dist/models')"`
 - [ ] 3. Build storage layer with SQLite indexing for search, test persistence and query speed via `npm run test:storage`
 - [ ] 4. Develop sensitive-data masking engine with regex support and test against sample PII tokens via `npm run test:masking`
