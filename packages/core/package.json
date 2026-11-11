@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:storage": "vitest run src/storage.test.ts",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
