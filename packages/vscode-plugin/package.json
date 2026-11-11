@@ -13,6 +13,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:unit": "vitest run",
+    "vscode:test": "vitest run",
     "vscode:prepublish": "npm run build",
     "clean": "rm -rf dist"
   },
