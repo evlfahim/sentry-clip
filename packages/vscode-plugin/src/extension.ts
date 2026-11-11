@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
 import { HistoryManager, Clip, Snippet, SnippetEngine } from '@sentry-clip/core';
+import { WebviewManager } from './webview';
 
 let historyManager: HistoryManager | undefined;
 let snippetEngine: SnippetEngine | undefined;
+let webviewManager: WebviewManager | undefined;
+let extensionUri: vscode.Uri | undefined;
 
 function getHistoryManager(): HistoryManager {
   if (!historyManager) {
@@ -16,6 +19,9 @@ function getHistoryManager(): HistoryManager {
       enableSnippets,
     });
     snippetEngine = new SnippetEngine(historyManager.getAllSnippets());
+    if (extensionUri) {
+      webviewManager = new WebviewManager({ historyManager, extensionUri });
+    }
   }
   return historyManager;
 }
@@ -88,6 +94,8 @@ async function showQuickPickSnippets(): Promise<Snippet | undefined> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionUri = context.extensionUri;
+
   // Listen for settings changes
   const configChangeListener = vscode.workspace.onDidChangeConfiguration(
     (event) => {
@@ -98,47 +106,51 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(configChangeListener);
 
-  // Show clipboard history via Quick Pick
+  // Show clipboard history via Webview UI
   const showHistory = vscode.commands.registerCommand(
     'sentry-clip.showHistory',
     async () => {
       try {
         const mgr = getHistoryManager();
-        const allClips = mgr.getClips();
-        const pinnedClips = mgr.getPinnedClips();
+        if (webviewManager) {
+          webviewManager.show();
+        } else {
+          // Fallback to Quick Pick if webview is not available
+          const allClips = mgr.getClips();
+          const pinnedClips = mgr.getPinnedClips();
 
-        // Combine: pinned first, then unpinned
-        const pinnedMap = new Map(pinnedClips.map((c) => [c.id, c]));
-        const unpinnedClips = allClips.filter((c) => !pinnedMap.has(c.id));
-        const combined = [...pinnedClips, ...unpinnedClips];
+          const pinnedMap = new Map(pinnedClips.map((c) => [c.id, c]));
+          const unpinnedClips = allClips.filter((c) => !pinnedMap.has(c.id));
+          const combined = [...pinnedClips, ...unpinnedClips];
 
-        if (combined.length === 0) {
-          vscode.window.showInformationMessage('No clipboard history.');
-          return;
-        }
+          if (combined.length === 0) {
+            vscode.window.showInformationMessage('No clipboard history.');
+            return;
+          }
 
-        const items = combined.map((clip) => ({
-          label:
-            clip.content.length > 80
-              ? clip.content.substring(0, 80) + '…'
-              : clip.content,
-          description: clip.pinned ? '📌 pinned' : '',
-          detail: mgr.getRelativeTime(clip.createdAt),
-          clip,
-        }));
+          const items = combined.map((clip) => ({
+            label:
+              clip.content.length > 80
+                ? clip.content.substring(0, 80) + '…'
+                : clip.content,
+            description: clip.pinned ? '📌 pinned' : '',
+            detail: mgr.getRelativeTime(clip.createdAt),
+            clip,
+          }));
 
-        const selected = await vscode.window.showQuickPick(items, {
-          placeHolder: 'Select a clipboard item',
-          matchOnDetail: true,
-          matchOnDescription: true,
-          ignoreFocusOut: true,
-        });
+          const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select a clipboard item',
+            matchOnDetail: true,
+            matchOnDescription: true,
+            ignoreFocusOut: true,
+          });
 
-        if (selected) {
-          await vscode.env.clipboard.writeText(selected.clip.content);
-          vscode.window.showInformationMessage(
-            `Copied: ${selected.clip.content.substring(0, 50)}${selected.clip.content.length > 50 ? '…' : ''}`
-          );
+          if (selected) {
+            await vscode.env.clipboard.writeText(selected.clip.content);
+            vscode.window.showInformationMessage(
+              `Copied: ${selected.clip.content.substring(0, 50)}${selected.clip.content.length > 50 ? '…' : ''}`
+            );
+          }
         }
       } catch (err) {
         vscode.window.showErrorMessage(`Sentry Clip error: ${err}`);
@@ -147,7 +159,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(showHistory);
 
-  // Copy selected clip to clipboard
+  // Copy selected clip to clipboard (Quick Pick fallback)
   const copyClip = vscode.commands.registerCommand(
     'sentry-clip.copy',
     async () => {
@@ -188,7 +200,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(copyClip);
 
-  // Pin/unpin a clip
+  // Pin/unpin a clip (Quick Pick fallback)
   const pinClip = vscode.commands.registerCommand(
     'sentry-clip.pin',
     async () => {
@@ -233,7 +245,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(pinClip);
 
-  // Search clips
+  // Search clips (Quick Pick fallback)
   const searchClips = vscode.commands.registerCommand(
     'sentry-clip.search',
     async () => {
@@ -283,7 +295,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(searchClips);
 
-  // Show snippets
+  // Show snippets (Quick Pick fallback)
   const showSnippets = vscode.commands.registerCommand(
     'sentry-clip.showSnippets',
     async () => {
@@ -402,6 +414,9 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(
             `Cleared ${count} clips from history.`
           );
+          if (webviewManager) {
+            webviewManager.update();
+          }
         }
       } catch (err) {
         vscode.window.showErrorMessage(`Sentry Clip error: ${err}`);
@@ -412,6 +427,10 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  if (webviewManager) {
+    webviewManager.dispose();
+    webviewManager = undefined;
+  }
   if (historyManager) {
     historyManager.close();
     historyManager = undefined;

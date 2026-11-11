@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:unit": "vitest run",
     "vscode:test": "vitest run",
+    "vscode:test-ui": "vitest run src/webview.test.ts",
     "vscode:prepublish": "npm run build",
     "clean": "rm -rf dist"
   },
@@ -37,7 +38,8 @@
     "commands": [
       {
         "command": "sentry-clip.showHistory",
-        "title": "Sentry Clip: Show Clipboard History"
+        "title": "Sentry Clip: Show Clipboard History",
+        "icon": "$(clipboard)"
       },
       {
         "command": "sentry-clip.copy",
@@ -46,6 +48,26 @@
       {
         "command": "sentry-clip.pin",
         "title": "Sentry Clip: Pin/Unpin Clip"
+      },
+      {
+        "command": "sentry-clip.search",
+        "title": "Sentry Clip: Search History"
+      },
+      {
+        "command": "sentry-clip.showSnippets",
+        "title": "Sentry Clip: Show Snippets"
+      },
+      {
+        "command": "sentry-clip.copySelection",
+        "title": "Sentry Clip: Copy Selection"
+      },
+      {
+        "command": "sentry-clip.stats",
+        "title": "Sentry Clip: Show Stats"
+      },
+      {
+        "command": "sentry-clip.clearHistory",
+        "title": "Sentry Clip: Clear History"
       }
     ],
     "keybindings": [
