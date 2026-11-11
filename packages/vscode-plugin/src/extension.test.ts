@@ -206,6 +206,8 @@ describe('VS Code Plugin - Core Integration', () => {
       'sentry-clip.copySelection',
       'sentry-clip.stats',
       'sentry-clip.clearHistory',
+      'sentry-clip.quickPick',
+      'sentry-clip.globalHotkey',
     ];
 
     for (const cmd of expectedCommands) {
@@ -221,8 +223,8 @@ describe('VS Code Plugin - Core Integration', () => {
   it('should add all disposables to context.subscriptions', () => {
     extension.activate(context);
 
-    // 8 command registrations + 1 config change listener = 9
-    expect(context.subscriptions.length).toBe(9);
+    // 10 command registrations + 1 config change listener = 11
+    expect(context.subscriptions.length).toBe(11);
   });
 
   // ── showHistory ────────────────────────────────────────────────────────────

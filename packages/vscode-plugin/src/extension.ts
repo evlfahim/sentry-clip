@@ -424,6 +424,114 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(clearHistory);
+
+  // ── Quick Pick flow (Ctrl+Shift+V) ─────────────────────────────────────────
+  // Shows a Quick Pick with all clips for fast selection and copy.
+  const quickPickClips = vscode.commands.registerCommand(
+    'sentry-clip.quickPick',
+    async () => {
+      try {
+        const mgr = getHistoryManager();
+        const allClips = mgr.getClips();
+
+        if (allClips.length === 0) {
+          vscode.window.showInformationMessage('No clips in history.');
+          return;
+        }
+
+        // Build a combined list: pinned first, then unpinned
+        const pinnedMap = new Map(
+          allClips.filter((c) => c.pinned).map((c) => [c.id, c])
+        );
+        const unpinnedClips = allClips.filter((c) => !pinnedMap.has(c.id));
+        const combined = [
+          ...allClips.filter((c) => c.pinned),
+          ...unpinnedClips,
+        ];
+
+        const items = combined.map((clip) => ({
+          label:
+            clip.content.length > 100
+              ? clip.content.substring(0, 100) + '…'
+              : clip.content,
+          description: clip.pinned ? '📌 pinned' : '',
+          detail: mgr.getRelativeTime(clip.createdAt),
+          clip,
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a clipboard item (Ctrl+Shift+V)',
+          matchOnDetail: true,
+          matchOnDescription: true,
+          ignoreFocusOut: true,
+        });
+
+        if (selected) {
+          await vscode.env.clipboard.writeText(selected.clip.content);
+          vscode.window.showInformationMessage(
+            `Copied: ${selected.clip.content.substring(0, 60)}${selected.clip.content.length > 60 ? '…' : ''}`
+          );
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(`Sentry Clip error: ${err}`);
+      }
+    }
+  );
+  context.subscriptions.push(quickPickClips);
+
+  // ── Global Hotkey ──────────────────────────────────────────────────────────
+  // A command that can be bound to a system-wide hotkey (when: "true").
+  // Opens the same Quick Pick flow regardless of editor focus.
+  const globalHotkey = vscode.commands.registerCommand(
+    'sentry-clip.globalHotkey',
+    async () => {
+      try {
+        const mgr = getHistoryManager();
+        const allClips = mgr.getClips();
+
+        if (allClips.length === 0) {
+          vscode.window.showInformationMessage('No clips in history.');
+          return;
+        }
+
+        const pinnedMap = new Map(
+          allClips.filter((c) => c.pinned).map((c) => [c.id, c])
+        );
+        const unpinnedClips = allClips.filter((c) => !pinnedMap.has(c.id));
+        const combined = [
+          ...allClips.filter((c) => c.pinned),
+          ...unpinnedClips,
+        ];
+
+        const items = combined.map((clip) => ({
+          label:
+            clip.content.length > 100
+              ? clip.content.substring(0, 100) + '…'
+              : clip.content,
+          description: clip.pinned ? '📌 pinned' : '',
+          detail: mgr.getRelativeTime(clip.createdAt),
+          clip,
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a clipboard item (Global Hotkey)',
+          matchOnDetail: true,
+          matchOnDescription: true,
+          ignoreFocusOut: true,
+        });
+
+        if (selected) {
+          await vscode.env.clipboard.writeText(selected.clip.content);
+          vscode.window.showInformationMessage(
+            `Copied: ${selected.clip.content.substring(0, 60)}${selected.clip.content.length > 60 ? '…' : ''}`
+          );
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(`Sentry Clip error: ${err}`);
+      }
+    }
+  );
+  context.subscriptions.push(globalHotkey);
 }
 
 export function deactivate() {

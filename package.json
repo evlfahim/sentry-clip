@@ -20,6 +20,7 @@
     "vscode:test": "vitest run packages/vscode-plugin/src/extension.test.ts",
     "vscode:test-ui": "vitest run packages/vscode-plugin/src/webview.test.ts",
     "vscode:test-ui-masking": "vitest run packages/vscode-plugin/src/webview.test.ts",
+    "vscode:test-quickpick": "vitest run packages/vscode-plugin/src/quickpick.test.ts",
     "cli": "node packages/core/dist/cli.js",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present",

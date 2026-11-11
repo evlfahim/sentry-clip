@@ -68,14 +68,30 @@
       {
         "command": "sentry-clip.clearHistory",
         "title": "Sentry Clip: Clear History"
+      },
+      {
+        "command": "sentry-clip.quickPick",
+        "title": "Sentry Clip: Quick Pick (Ctrl+Shift+V)",
+        "icon": "$(paste)"
+      },
+      {
+        "command": "sentry-clip.globalHotkey",
+        "title": "Sentry Clip: Global Hotkey",
+        "icon": "$(globe)"
       }
     ],
     "keybindings": [
       {
-        "command": "sentry-clip.showHistory",
+        "command": "sentry-clip.quickPick",
         "key": "ctrl+shift+v",
         "mac": "cmd+shift+v",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "sentry-clip.globalHotkey",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "true"
       }
     ],
     "configuration": {

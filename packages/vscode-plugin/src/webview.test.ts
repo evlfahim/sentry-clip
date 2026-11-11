@@ -1012,7 +1012,8 @@ describe('Webview UI - Masking & Snippets Tests', () => {
 
     it('should add all disposables to context.subscriptions', () => {
       extension.activate(context);
-      expect(context.subscriptions.length).toBe(9);
+      // 10 command registrations + 1 config change listener = 11
+      expect(context.subscriptions.length).toBe(11);
     });
 
     it('should handle clearHistory and update webview', async () => {

@@ -40,7 +40,7 @@ Core logic resides in `@sentry-clip/core` (pure Node.js/TS). The VS Code plugin 
 - [x] 9. Integrate core into plugin by wrapping commands and connecting to VS Code Quick Pick, test via `npm run vscode:test`
 - [x] 10. Build Webview UI with search bar, clip list, and pin toggle, verify rendering via `npm run vscode:test-ui`
 - [x] 11. Add masking preview and snippet placeholder editor in Webview, test UI interactions via `npm run vscode:test-ui-masking`
-- [ ] 12. Implement global hotkey and `Ctrl+Shift+V` Quick Pick flow, test shortcut binding via `npm run vscode:test-quickpick`
+- [x] 12. Implement global hotkey and `Ctrl+Shift+V` Quick Pick flow, test shortcut binding via `npm run vscode:test-quickpick`
 - [ ] 13. Map VS Code settings to core configuration, test dynamic updates via `npm run vscode:test-config`
 - [ ] 14. Polish UI with relative timestamps, hover previews, and status bar integration, verify final UI via `npm run vscode:test-ui-final`
 - [ ] 15. Write README with run instructions, feature list, and step-by-step guide to convert core into a standalone desktop plugin
