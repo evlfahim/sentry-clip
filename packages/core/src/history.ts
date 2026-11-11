@@ -1,4 +1,4 @@
-import { Clip, ClipHistoryConfig } from './models';
+import { Clip, Snippet, ClipHistoryConfig } from './models';
 import { ClipStorage } from './storage';
 import { MaskEngine } from './masking';
 
@@ -261,6 +261,34 @@ export class HistoryManager {
    */
   isExcluded(content: string): boolean {
     return matchesExclusion(content, this.config.exclusionPatterns);
+  }
+
+  /**
+   * Get all snippets from storage.
+   */
+  getAllSnippets(): Snippet[] {
+    return this.storage.getAllSnippets();
+  }
+
+  /**
+   * Add a snippet.
+   */
+  addSnippet(snippet: Snippet): void {
+    this.storage.saveSnippet(snippet);
+  }
+
+  /**
+   * Get a snippet by ID.
+   */
+  getSnippet(id: string): Snippet | undefined {
+    return this.storage.getSnippet(id);
+  }
+
+  /**
+   * Delete a snippet by ID.
+   */
+  deleteSnippet(id: string): boolean {
+    return this.storage.deleteSnippet(id);
   }
 
   private generateId(): string {

@@ -41,6 +41,7 @@ function parseArgs(args: string[]): { command: CliCommand; positional: string[];
     if (arg === '--db' && i + 1 < args.length) {
       options.db = args[i + 1];
       i += 2;
+      continue;
     } else if (arg === '--json') {
       options.json = true;
       i++;
@@ -50,9 +51,11 @@ function parseArgs(args: string[]): { command: CliCommand; positional: string[];
     } else if (arg === '--limit' && i + 1 < args.length) {
       options.limit = parseInt(args[i + 1], 10);
       i += 2;
+      continue;
     } else if (arg === '--offset' && i + 1 < args.length) {
       options.offset = parseInt(args[i + 1], 10);
       i += 2;
+      continue;
     } else if (result.includes(arg as CliCommand)) {
       command = arg as CliCommand;
       i++;
@@ -206,8 +209,7 @@ function handleClear(manager: HistoryManager): void {
 }
 
 function handleSnippets(manager: HistoryManager, options: CliOptions): void {
-  const snippetEngine = new SnippetEngine();
-  const snippets = snippetEngine.getSnippets();
+  const snippets = manager.getAllSnippets();
 
   if (options.json) {
     output(snippets);
@@ -244,7 +246,7 @@ function handleSnippetAdd(manager: HistoryManager, args: string[], json: boolean
     placeholders: snippetEngine.extractPlaceholders(content),
     createdAt: Date.now(),
   };
-  snippetEngine.addSnippet(snippet);
+  manager.addSnippet(snippet);
   console.log(`Snippet added: ${snippet.id} (${snippet.name})`);
   if (json) {
     output(snippet);
@@ -252,12 +254,11 @@ function handleSnippetAdd(manager: HistoryManager, args: string[], json: boolean
 }
 
 function handleSnippetDelete(manager: HistoryManager, snippetId: string): void {
-  const snippetEngine = new SnippetEngine();
-  const before = snippetEngine.getSnippet(snippetId);
+  const before = manager.getSnippet(snippetId);
   if (!before) {
     error(`Snippet not found: ${snippetId}`);
   }
-  snippetEngine.removeSnippet(snippetId);
+  manager.deleteSnippet(snippetId);
   console.log(`Deleted snippet: ${snippetId}`);
 }
 
