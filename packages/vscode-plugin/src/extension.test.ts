@@ -117,8 +117,35 @@ vi.mock('@sentry-clip/core', () => ({
   Snippet: {},
 }));
 
-// Import after mocking
-import * as extension from './extension';
+// Import after mocking — use dynamic import so modules are reloaded between tests
+let extension: typeof import('./extension');
+
+async function getExtension() {
+  if (!extension) {
+    extension = await import('./extension');
+  }
+  return extension;
+}
+
+// ── Test helpers ───────────────────────────────────────────────────────────────
+
+function getCommandHandler(name: string) {
+  const call = mockRegisterCommand.mock.calls.find(
+    (c: any[]) => c[0] === name
+  );
+  expect(call).toBeDefined(`Command ${name} was not registered`);
+  return call![1] as () => Promise<void>;
+}
+
+// ── Test helpers ───────────────────────────────────────────────────────────────
+
+function getCommandHandler(name: string) {
+  const call = mockRegisterCommand.mock.calls.find(
+    (c: any[]) => c[0] === name
+  );
+  expect(call).toBeDefined(`Command ${name} was not registered`);
+  return call![1] as () => Promise<void>;
+}
 
 // ── Test helpers ───────────────────────────────────────────────────────────────
 
@@ -209,13 +236,14 @@ describe('VS Code Plugin - Core Integration', () => {
 
   // ── Activation ─────────────────────────────────────────────────────────────
 
-  it('should export activate and deactivate functions', () => {
-    expect(typeof extension.activate).toBe('function');
-    expect(typeof extension.deactivate).toBe('function');
+  it('should export activate and deactivate functions', async () => {
+    const mod = await getExtension();
+    expect(typeof mod.activate).toBe('function');
+    expect(typeof mod.deactivate).toBe('function');
   });
 
   it('should register all commands when activate is called', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     const registeredCommands = mockRegisterCommand.mock.calls.map(
       (call: any[]) => call[0]
@@ -240,12 +268,12 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should listen for configuration changes', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     expect(mockOnDidChangeConfiguration).toHaveBeenCalled();
   });
 
   it('should add all disposables to context.subscriptions', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     // 10 command registrations + 1 config change listener + 1 status bar = 12
     expect(context.subscriptions.length).toBe(12);
@@ -254,7 +282,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── Status Bar ─────────────────────────────────────────────────────────────
 
   it('should create a status bar item on activation', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     expect(mockCreateStatusBarItem).toHaveBeenCalledWith(
       expect.anything(),
@@ -264,7 +292,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should set initial status bar text', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     // The status bar is created with default text
     expect(mockStatusBarSetText).toHaveBeenCalledWith(
@@ -273,7 +301,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should update status bar text with clip count after getHistoryManager is called', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -286,8 +314,8 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should dispose status bar on deactivate', () => {
-    extension.activate(context);
-    extension.deactivate();
+    await getExtension().activate(context);
+    await getExtension().deactivate();
 
     expect(mockStatusBarDispose).toHaveBeenCalled();
   });
@@ -295,7 +323,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── showHistory ────────────────────────────────────────────────────────────
 
   it('should show Quick Pick with combined pinned + unpinned clips', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
@@ -309,7 +337,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should write selected clip to clipboard', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
@@ -322,7 +350,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should show info message when no clips exist', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockHistoryManager.getClips.mockReturnValue([]);
@@ -336,7 +364,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should use correct placeHolder for showHistory', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -347,7 +375,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should use ignoreFocusOut for Quick Pick dialogs', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -358,7 +386,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should use matchOnDetail and matchOnDescription for Quick Pick', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -372,7 +400,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── copy ───────────────────────────────────────────────────────────────────
 
   it('should show Quick Pick and copy selected clip', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.copy');
 
     mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
@@ -383,7 +411,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should show info message when no clips exist', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.copy');
 
     mockHistoryManager.getClips.mockReturnValue([]);
@@ -398,7 +426,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── pin ────────────────────────────────────────────────────────────────────
 
   it('should toggle pin on selected clip', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.pin');
 
     mockShowQuickPick.mockResolvedValue({ clip: sampleClip });
@@ -411,7 +439,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should show info message when no clips exist', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.pin');
 
     mockHistoryManager.getClips.mockReturnValue([]);
@@ -426,7 +454,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── search ─────────────────────────────────────────────────────────────────
 
   it('should handle search command with input', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.search');
 
     mockShowInputBox.mockResolvedValue('test query');
@@ -441,7 +469,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should handle search command with empty input', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.search');
 
     mockShowInputBox.mockResolvedValue('');
@@ -455,7 +483,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should handle search command with null input', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.search');
 
     mockShowInputBox.mockResolvedValue(null);
@@ -469,7 +497,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should write searched clip to clipboard when selected', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.search');
 
     mockShowInputBox.mockResolvedValue('test');
@@ -480,7 +508,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should show info message when no search results', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.search');
 
     mockShowInputBox.mockResolvedValue('no results');
@@ -496,7 +524,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── showSnippets ───────────────────────────────────────────────────────────
 
   it('should show Quick Pick with snippets', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showSnippets');
 
     mockShowQuickPick.mockResolvedValue({ snippet: sampleSnippet });
@@ -506,7 +534,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should resolve placeholders and copy to clipboard', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showSnippets');
 
     mockShowQuickPick.mockResolvedValue({ snippet: sampleSnippet });
@@ -517,7 +545,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should show info message when no snippets exist', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showSnippets');
 
     mockHistoryManager.getAllSnippets.mockReturnValue([]);
@@ -532,7 +560,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── copySelection ──────────────────────────────────────────────────────────
 
   it('should copy current editor selection to clipboard and history', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.copySelection');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -543,7 +571,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should handle copySelection with no active editor', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.copySelection');
 
     mockActiveTextEditor.selection = { isEmpty: true };
@@ -558,7 +586,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── stats ──────────────────────────────────────────────────────────────────
 
   it('should handle stats command', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.stats');
 
     await handler();
@@ -571,7 +599,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── clearHistory ───────────────────────────────────────────────────────────
 
   it('should handle clearHistory with confirmation', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.clearHistory');
 
     mockShowWarningMessage.mockResolvedValue('Yes, clear all');
@@ -586,7 +614,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should handle clearHistory with cancellation', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.clearHistory');
 
     mockShowWarningMessage.mockResolvedValue(undefined);
@@ -600,25 +628,25 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── deactivate ─────────────────────────────────────────────────────────────
 
   it('should handle deactivate properly', () => {
-    extension.activate(context);
-    expect(() => extension.deactivate()).not.toThrow();
+    await getExtension().activate(context);
+    expect(() => await getExtension().deactivate()).not.toThrow();
   });
 
   it('should call historyManager.close on deactivate', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     // Trigger a command handler to initialize the historyManager singleton
     const handler = getCommandHandler('sentry-clip.showHistory');
     mockShowQuickPick.mockResolvedValue(null);
     await handler();
     // Now deactivate should close the historyManager
-    extension.deactivate();
+    await getExtension().deactivate();
     expect(mockHistoryManager.close).toHaveBeenCalled();
   });
 
   // ── Error handling ─────────────────────────────────────────────────────────
 
   it('should show error message when command throws', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockHistoryManager.getClips.mockImplementation(() => {
@@ -635,7 +663,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── Config refresh ─────────────────────────────────────────────────────────
 
   it('should refresh config on settings change', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     // Simulate a config change event
     const configCallback = mockOnDidChangeConfiguration.mock.calls[0][0];
@@ -647,7 +675,7 @@ describe('VS Code Plugin - Core Integration', () => {
   // ── Step 14: UI Polish - Relative Timestamps, Hover Previews, Status Bar ──
 
   it('should create status bar with initial text on activation', () => {
-    extension.activate(context);
+    await getExtension().activate(context);
 
     expect(mockCreateStatusBarItem).toHaveBeenCalled();
     expect(mockStatusBarShow).toHaveBeenCalled();
@@ -657,7 +685,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should update status bar text with clip count after history is accessed', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -672,7 +700,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should update status bar tooltip with clip info', async () => {
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -684,8 +712,8 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   it('should dispose status bar on deactivate', () => {
-    extension.activate(context);
-    extension.deactivate();
+    await getExtension().activate(context);
+    await getExtension().deactivate();
 
     expect(mockStatusBarDispose).toHaveBeenCalled();
   });
@@ -699,7 +727,7 @@ describe('VS Code Plugin - Core Integration', () => {
       totalMaskRules: 1,
     });
 
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -720,7 +748,7 @@ describe('VS Code Plugin - Core Integration', () => {
       totalMaskRules: 0,
     });
 
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
@@ -737,7 +765,7 @@ describe('VS Code Plugin - Core Integration', () => {
       throw new Error('Stats error');
     });
 
-    extension.activate(context);
+    await getExtension().activate(context);
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
