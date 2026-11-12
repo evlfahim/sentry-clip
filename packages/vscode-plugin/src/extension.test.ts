@@ -712,7 +712,7 @@ describe('VS Code Plugin - Core Integration', () => {
     expect(lastCall).toContain('2 pinned');
   });
 
-  it('should update status bar without pinned text when no clips are pinned', () => {
+  it('should update status bar without pinned text when no clips are pinned', async () => {
     mockHistoryManager.getStats.mockReturnValue({
       totalClips: 3,
       pinnedClips: 0,
@@ -724,7 +724,7 @@ describe('VS Code Plugin - Core Integration', () => {
     const handler = getCommandHandler('sentry-clip.showHistory');
 
     mockShowQuickPick.mockResolvedValue(null);
-    handler();
+    await handler();
 
     const setTextCalls = mockStatusBarSetText.mock.calls;
     const lastCall = setTextCalls[setTextCalls.length - 1][0];
@@ -732,7 +732,7 @@ describe('VS Code Plugin - Core Integration', () => {
     expect(lastCall).not.toContain('pinned');
   });
 
-  it('should handle status bar update gracefully when stats fail', () => {
+  it('should handle status bar update gracefully when stats fail', async () => {
     mockHistoryManager.getStats.mockImplementation(() => {
       throw new Error('Stats error');
     });

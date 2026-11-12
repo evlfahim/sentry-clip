@@ -40,6 +40,8 @@ function getHistoryManager(): HistoryManager {
     if (extensionUri) {
       webviewManager = new WebviewManager({ historyManager, extensionUri });
     }
+    // Start status bar refresh now that historyManager exists
+    startStatusBarRefresh();
   }
   return historyManager;
 }
