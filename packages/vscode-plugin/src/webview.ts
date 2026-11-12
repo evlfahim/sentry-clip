@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'crypto';
 import { HistoryManager, Clip, Snippet, SnippetEngine, MaskEngine, MaskRule } from '@sentry-clip/core';
 
 export interface WebviewMessage {
@@ -18,6 +19,10 @@ export interface WebviewState {
   snippets: { id: string; name: string; content: string; placeholders: string[] }[];
   maskRules: { id: string; name: string; pattern: string; replacement: string; enabled: boolean }[];
   builtinPlaceholders: { name: string; description: string }[];
+}
+
+function getNonce(): string {
+  return randomBytes(16).toString('hex');
 }
 
 export class WebviewManager {
@@ -71,23 +76,23 @@ export class WebviewManager {
       this.disposables
     );
 
-    // Listen for dispose
+    // Listen for dispose. The panel's listeners are dropped with it so that
+    // reopening the panel never leaves a second message handler behind.
     panel.onDidDispose(
       () => {
         this.panel = undefined;
+        this.disposeListeners();
       },
       null,
       this.disposables
     );
 
-    // Listen for messages from webview
+    // The single listener for messages from the webview
     panel.webview.onDidReceiveMessage(
       (message: WebviewMessage) => this.handleMessage(message),
       null,
       this.disposables
     );
-
-    this.disposables.push(panel);
     // The HTML is set once with the initial state embedded; later updates go
     // through postMessage so the page (and its timers/scroll) is not reloaded.
     panel.webview.html = this.getHtml(this.buildState());
@@ -134,13 +139,15 @@ export class WebviewManager {
     const cspSource = this.panel!.webview.cspSource;
     // Escape '<' so clip content can never close the <script> tag
     const stateJson = JSON.stringify(state).replace(/</g, '\\u003c');
+    // Only the script carrying this nonce may run; inline/injected scripts are blocked
+    const nonce = getNonce();
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${cspSource} data:; font-src ${cspSource};">
   <title>Sentry Clip</title>
   <style>
     :root {
@@ -486,7 +493,7 @@ export class WebviewManager {
   </div>
   <div class="toast" id="toast"></div>
 
-  <script>
+  <script nonce="${nonce}">
     const initialState = ${stateJson};
     let clips = initialState.clips || [];
     let filter = 'all';
@@ -642,7 +649,6 @@ export class WebviewManager {
         list.querySelectorAll('[data-del-rule]').forEach(btn => {
           btn.addEventListener('click', function() {
             vsc.postMessage({ type: 'deleteMaskRule', ruleId: this.dataset.delRule });
-            vsc.postMessage({ type: 'refresh' });
           });
         });
 
@@ -734,7 +740,6 @@ export class WebviewManager {
               editingSnippetId = null;
               document.getElementById('snippetEditor').style.display = 'none';
             }
-            vsc.postMessage({ type: 'refresh' });
           });
         });
       }
@@ -808,7 +813,6 @@ export class WebviewManager {
       vsc.postMessage({ type: 'saveSnippet', snippetId: editingSnippetId, name: name, content: content });
       editingSnippetId = null;
       document.getElementById('snippetEditor').style.display = 'none';
-      vsc.postMessage({ type: 'refresh' });
       showToast('Snippet saved');
     });
 
@@ -824,7 +828,6 @@ export class WebviewManager {
         vsc.postMessage({ type: 'deleteSnippet', snippetId: editingSnippetId });
         editingSnippetId = null;
         document.getElementById('snippetEditor').style.display = 'none';
-        vsc.postMessage({ type: 'refresh' });
         showToast('Snippet deleted');
       }
     });
@@ -866,6 +869,9 @@ export class WebviewManager {
     }
 
     // ── Message handling ──
+    // The one and only message listener. 'init'/'update' only re-render the
+    // lists from data; they never reload the page or ask for more data, so
+    // there is no request/response loop with the extension.
     window.addEventListener('message', function(e) {
       var m = e.data;
       if (m.type === 'init') {
@@ -893,9 +899,6 @@ export class WebviewManager {
       }
       else if (m.type === 'maskPreview') {
         document.getElementById('previewOutput').textContent = m.preview || 'No masking applied';
-      }
-      else if (m.type === 'refresh') {
-        vsc.postMessage({ type: 'requestInit' });
       }
       else if (m.type === 'updateTimestamps') {
         clips.forEach(function(c) {
@@ -1127,9 +1130,16 @@ export class WebviewManager {
     }
   }
 
-  dispose(): void {
-    this.disposables.forEach(d => d.dispose());
+  private disposeListeners(): void {
+    const disposables = this.disposables;
     this.disposables = [];
+    disposables.forEach(d => d.dispose());
+  }
+
+  dispose(): void {
+    const panel = this.panel;
     this.panel = undefined;
+    this.disposeListeners();
+    panel?.dispose();
   }
 }
