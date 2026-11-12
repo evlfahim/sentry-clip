@@ -9,12 +9,22 @@ export interface WebviewMessage {
 export interface WebviewManagerOptions {
   historyManager: HistoryManager;
   extensionUri: vscode.Uri;
+  /** Called after the webview changes history (pin, clear) so hosts can refresh e.g. the status bar. */
+  onDidChange?: () => void;
+}
+
+export interface WebviewState {
+  clips: { id: string; content: string; pinned: boolean; createdAt: number; relativeTime: string }[];
+  snippets: { id: string; name: string; content: string; placeholders: string[] }[];
+  maskRules: { id: string; name: string; pattern: string; replacement: string; enabled: boolean }[];
+  builtinPlaceholders: { name: string; description: string }[];
 }
 
 export class WebviewManager {
   private panel: vscode.WebviewPanel | undefined;
   private historyManager: HistoryManager;
   private extensionUri: vscode.Uri;
+  private onDidChange: (() => void) | undefined;
   private disposables: vscode.Disposable[] = [];
   private snippetEngine: SnippetEngine | undefined;
   private maskEngine: MaskEngine;
@@ -22,12 +32,8 @@ export class WebviewManager {
   constructor(options: WebviewManagerOptions) {
     this.historyManager = options.historyManager;
     this.extensionUri = options.extensionUri;
+    this.onDidChange = options.onDidChange;
     this.maskEngine = new MaskEngine();
-    // Get mask rules from storage
-    const maskRules = this.historyManager.getConfig().enableMasking
-      ? this.maskEngine.getRules()
-      : [];
-    // Initialize snippet engine
     this.snippetEngine = new SnippetEngine(this.historyManager.getAllSnippets());
   }
 
@@ -82,16 +88,17 @@ export class WebviewManager {
     );
 
     this.disposables.push(panel);
-    this.sendInitMessage();
+    // The HTML is set once with the initial state embedded; later updates go
+    // through postMessage so the page (and its timers/scroll) is not reloaded.
+    panel.webview.html = this.getHtml(this.buildState());
   }
 
-  private sendInitMessage(): void {
-    if (!this.panel) return;
-
+  private buildState(): WebviewState {
     const clips = this.historyManager.getClips({ limit: 200 }).map((clip) => ({
       id: clip.id,
       content: clip.content,
       pinned: clip.pinned,
+      createdAt: clip.createdAt,
       relativeTime: this.historyManager.getRelativeTime(clip.createdAt),
     }));
 
@@ -102,24 +109,38 @@ export class WebviewManager {
       placeholders: snippet.placeholders,
     }));
 
-    const maskRules = this.maskEngine.getRules();
+    // RegExp objects do not survive JSON/postMessage, so send the source text
+    const maskRules = this.maskEngine.getRules().map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      pattern: rule.pattern instanceof RegExp ? rule.pattern.source : String(rule.pattern),
+      replacement: rule.replacement,
+      enabled: rule.enabled,
+    }));
 
     const builtinPlaceholders = this.snippetEngine
       ? this.snippetEngine.getBuiltInPlaceholders()
       : [];
 
-    this.panel.webview.html = this.getHtml(clips, snippets, maskRules, builtinPlaceholders);
+    return { clips, snippets, maskRules, builtinPlaceholders };
   }
 
-  private getHtml(clips: any[], snippets: any[], maskRules: any[], builtinPlaceholders: any[]): string {
+  private sendInitMessage(): void {
+    if (!this.panel) return;
+    this.panel.webview.postMessage({ type: 'init', ...this.buildState() });
+  }
+
+  private getHtml(state: WebviewState): string {
     const cspSource = this.panel!.webview.cspSource;
+    // Escape '<' so clip content can never close the <script> tag
+    const stateJson = JSON.stringify(state).replace(/</g, '\\u003c');
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src '${cspSource}' 'unsafe-inline'; script-src '${cspSource}' 'unsafe-inline'; img-src '${cspSource}' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:;">
   <title>Sentry Clip</title>
   <style>
     :root {
@@ -253,6 +274,7 @@ export class WebviewManager {
     .clip-item:hover .hover-preview {
       display: block;
     }
+    .clip-item .hover-preview.above { top: auto; bottom: 100%; }
     .hover-preview .preview-label {
       font-size: 10px;
       color: var(--fg2);
@@ -465,13 +487,14 @@ export class WebviewManager {
   <div class="toast" id="toast"></div>
 
   <script>
-    let clips = [];
+    const initialState = ${stateJson};
+    let clips = initialState.clips || [];
     let filter = 'all';
     let search = '';
     let selectedId = null;
-    let snippets = [];
-    let maskRules = [];
-    let builtinPlaceholders = [];
+    let snippets = initialState.snippets || [];
+    let maskRules = initialState.maskRules || [];
+    let builtinPlaceholders = initialState.builtinPlaceholders || [];
     let editingSnippetId = null;
     let activeTab = 'history';
 
@@ -499,6 +522,15 @@ export class WebviewManager {
       return r;
     }
 
+    function absoluteTime(c) {
+      const d = new Date(c.createdAt);
+      return isNaN(d.getTime()) ? '' : d.toLocaleString();
+    }
+
+    function previewMeta(c) {
+      return esc(c.relativeTime || '') + (c.pinned ? ' · 📌 Pinned' : '') + ' · ' + c.content.length + ' chars';
+    }
+
     function render() {
       const items = filtered();
       if (items.length === 0) {
@@ -506,20 +538,25 @@ export class WebviewManager {
       } else {
         document.getElementById('clipList').innerHTML = items.map(c => {
           const previewContent = c.content.length > 300 ? c.content.substring(0, 300) + '…' : c.content;
-          return '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + c.id + '">' +
+          return '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + esc(c.id) + '">' +
             '<div class="clip-info">' +
-              '<div class="clip-text" title="' + esc(c.content) + '">' + esc(c.content) + '</div>' +
-              '<div class="clip-meta" data-timestamp="' + c.createdAt + '">' + (c.relativeTime || '') + '</div>' +
+              '<div class="clip-text">' + esc(c.content) + '</div>' +
+              '<div class="clip-meta" title="' + esc(absoluteTime(c)) + '">' + esc(c.relativeTime || '') + '</div>' +
             '</div>' +
-            '<button class="pin-btn ' + (c.pinned ? 'pinned' : '') + '" data-pin="' + c.id + '">' + (c.pinned ? '★' : '☆') + '</button>' +
+            '<button class="pin-btn ' + (c.pinned ? 'pinned' : '') + '" data-pin="' + esc(c.id) + '" title="' + (c.pinned ? 'Unpin' : 'Pin') + '">' + (c.pinned ? '★' : '☆') + '</button>' +
             '<div class="hover-preview">' +
               '<div class="preview-label">Full Content</div>' +
               '<div class="preview-content">' + esc(previewContent) + '</div>' +
-              '<div class="preview-meta">' + (c.relativeTime || '') + (c.pinned ? ' · 📌 Pinned' : '') + '</div>' +
+              '<div class="preview-meta">' + previewMeta(c) + '</div>' +
             '</div>' +
           '</div>';
         }).join('');
         document.getElementById('clipList').querySelectorAll('.clip-item').forEach(el => {
+          // Flip the preview above the item when it would run off the bottom
+          el.addEventListener('mouseenter', () => {
+            const preview = el.querySelector('.hover-preview');
+            if (preview) preview.classList.toggle('above', el.getBoundingClientRect().bottom + 200 > window.innerHeight);
+          });
           el.addEventListener('click', (e) => {
             if (e.target.classList.contains('pin-btn')) return;
             selectedId = el.dataset.id;
@@ -738,12 +775,8 @@ export class WebviewManager {
         : '<span style="color: var(--fg2); font-size: 11px;">No placeholders detected</span>';
 
       // Preview with resolution simulation
-      let previewText = content;
       const phRegex2 = /\\{\\{(\\w+)\\}\\}/g;
-      previewText = content.replace(phRegex2, (match, name) => {
-        if (builtinPlaceholders.some(p => p.name === name)) {
-          return '<span class="unresolved">[' + name + ']</span>';
-        }
+      const previewText = esc(content).replace(phRegex2, (match, name) => {
         return '<span class="unresolved">[' + name + ']</span>';
       });
 
@@ -805,6 +838,33 @@ export class WebviewManager {
       setTimeout(function() { toastEl.classList.remove('show'); }, 2000);
     }
 
+    // ── Relative timestamp auto-refresh ──
+    // Ask the extension for fresh relative times every 30 seconds
+    let timestampInterval = null;
+
+    function startTimestampRefresh() {
+      if (timestampInterval) clearInterval(timestampInterval);
+      timestampInterval = setInterval(function() {
+        vsc.postMessage({ type: 'requestTimestamps' });
+      }, 30000);
+    }
+
+    function stopTimestampRefresh() {
+      if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
+    }
+
+    // Patch only the time labels so an open hover preview is not torn down
+    function applyTimestamps() {
+      document.getElementById('clipList').querySelectorAll('.clip-item').forEach(function(el) {
+        const c = clips.find(function(x) { return x.id === el.dataset.id; });
+        if (!c) return;
+        const meta = el.querySelector('.clip-meta');
+        if (meta) meta.textContent = c.relativeTime || '';
+        const pm = el.querySelector('.preview-meta');
+        if (pm) pm.innerHTML = previewMeta(c);
+      });
+    }
+
     // ── Message handling ──
     window.addEventListener('message', function(e) {
       var m = e.data;
@@ -816,53 +876,6 @@ export class WebviewManager {
         render();
         renderMaskRules();
         renderSnippets();
-      }
-      else if (m.type === 'update') {
-        clips = m.clips || clips;
-        render();
-      }
-      else if (m.type === 'clear') {
-        clips = [];
-        render();
-      }
-      else if (m.type === 'toast') {
-        showToast(m.message, m.level);
-      }
-      else if (m.type === 'maskPreview') {
-        const output = document.getElementById('previewOutput');
-        output.innerHTML = m.preview || 'No masking applied';
-      }
-      else if (m.type === 'refresh') {
-        vsc.postMessage({ type: 'requestInit' });
-      }
-    });
-
-    vsc.postMessage({ type: 'requestInit' });
-
-    // ── Relative timestamp auto-refresh ──
-    // Update relative timestamps every 30 seconds
-    let timestampInterval: ReturnType<typeof setInterval> | null = null;
-
-    function updateTimestamps() {
-      vsc.postMessage({ type: 'requestTimestamps' });
-    }
-
-    function startTimestampRefresh() {
-      if (timestampInterval) clearInterval(timestampInterval);
-      timestampInterval = setInterval(updateTimestamps, 30000);
-    }
-
-    // Start refresh on init and when clips are updated
-    window.addEventListener('message', function(e) {
-      var m = e.data;
-      if (m.type === 'init') {
-        clips = m.clips || [];
-        snippets = m.snippets || [];
-        maskRules = m.maskRules || [];
-        builtinPlaceholders = m.builtinPlaceholders || [];
-        render();
-        renderMaskRules();
-        renderSnippets();
         startTimestampRefresh();
       }
       else if (m.type === 'update') {
@@ -873,33 +886,34 @@ export class WebviewManager {
       else if (m.type === 'clear') {
         clips = [];
         render();
-        if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
+        stopTimestampRefresh();
       }
       else if (m.type === 'toast') {
         showToast(m.message, m.level);
       }
       else if (m.type === 'maskPreview') {
-        const output = document.getElementById('previewOutput');
-        output.innerHTML = m.preview || 'No masking applied';
+        document.getElementById('previewOutput').textContent = m.preview || 'No masking applied';
       }
       else if (m.type === 'refresh') {
         vsc.postMessage({ type: 'requestInit' });
       }
       else if (m.type === 'updateTimestamps') {
-        // Update relative timestamps for all clips
         clips.forEach(function(c) {
-          if (c.id && m.timestamps && m.timestamps[c.id]) {
+          if (m.timestamps && m.timestamps[c.id]) {
             c.relativeTime = m.timestamps[c.id];
           }
         });
-        render();
+        applyTimestamps();
       }
     });
 
-    // Clean up on page unload
-    window.addEventListener('beforeunload', function() {
-      if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
-    });
+    window.addEventListener('beforeunload', stopTimestampRefresh);
+
+    // Initial render from the state embedded by the extension
+    render();
+    renderMaskRules();
+    renderSnippets();
+    startTimestampRefresh();
   </script>
 </body>
 </html>`;
@@ -936,6 +950,7 @@ export class WebviewManager {
         try {
           this.historyManager.togglePin(message.clipId);
           this.sendInitMessage();
+          this.onDidChange?.();
           this.showToast('Toggled pin');
         } catch (err) {
           this.showToast(`Error: ${err}`, 'error');
@@ -963,6 +978,7 @@ export class WebviewManager {
         try {
           this.historyManager.clearHistory();
           this.sendInitMessage();
+          this.onDidChange?.();
           this.showToast('History cleared');
         } catch (err) {
           this.showToast(`Error: ${err}`, 'error');
@@ -1114,5 +1130,6 @@ export class WebviewManager {
   dispose(): void {
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
+    this.panel = undefined;
   }
 }

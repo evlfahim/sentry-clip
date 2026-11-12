@@ -38,7 +38,7 @@ function getHistoryManager(): HistoryManager {
     });
     snippetEngine = new SnippetEngine(historyManager.getAllSnippets());
     if (extensionUri) {
-      webviewManager = new WebviewManager({ historyManager, extensionUri });
+      webviewManager = new WebviewManager({ historyManager, extensionUri, onDidChange: updateStatusBar });
     }
     // Start status bar refresh now that historyManager exists
     startStatusBarRefresh();
@@ -63,8 +63,9 @@ function refreshConfig(): void {
     // Rebuild webview manager so its mask engine and snippet engine are fresh
     if (webviewManager && extensionUri) {
       webviewManager.dispose();
-      webviewManager = new WebviewManager({ historyManager, extensionUri });
+      webviewManager = new WebviewManager({ historyManager, extensionUri, onDidChange: updateStatusBar });
     }
+    updateStatusBar();
   }
 }
 
@@ -307,6 +308,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (selected) {
           mgr.togglePin(selected.clip.id);
+          updateStatusBar();
+          webviewManager?.update();
           vscode.window.showInformationMessage(
             selected.clip.pinned
               ? `Unpinned: ${selected.clip.content.substring(0, 50)}${selected.clip.content.length > 50 ? '…' : ''}`
@@ -441,6 +444,8 @@ export function activate(context: vscode.ExtensionContext) {
         const clip = mgr.addClip(text);
 
         if (clip.id) {
+          updateStatusBar();
+          webviewManager?.update();
           await vscode.env.clipboard.writeText(clip.content);
           vscode.window.showInformationMessage(
             `Copied and saved: ${clip.content.substring(0, 50)}${clip.content.length > 50 ? '…' : ''}`
@@ -489,6 +494,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(
             `Cleared ${count} clips from history.`
           );
+          updateStatusBar();
           if (webviewManager) {
             webviewManager.update();
           }
@@ -610,6 +616,10 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  if (statusBarInterval) {
+    clearInterval(statusBarInterval);
+    statusBarInterval = undefined;
+  }
   if (statusBar) {
     statusBar.dispose();
     statusBar = undefined;
