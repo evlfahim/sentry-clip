@@ -118,33 +118,11 @@ vi.mock('@sentry-clip/core', () => ({
 }));
 
 // Import after mocking — use dynamic import so modules are reloaded between tests
-let extension: typeof import('./extension');
+let extension: typeof import('./extension') | undefined;
 
 async function getExtension() {
-  if (!extension) {
-    extension = await import('./extension');
-  }
+  extension = await import('./extension');
   return extension;
-}
-
-// ── Test helpers ───────────────────────────────────────────────────────────────
-
-function getCommandHandler(name: string) {
-  const call = mockRegisterCommand.mock.calls.find(
-    (c: any[]) => c[0] === name
-  );
-  expect(call).toBeDefined(`Command ${name} was not registered`);
-  return call![1] as () => Promise<void>;
-}
-
-// ── Test helpers ───────────────────────────────────────────────────────────────
-
-function getCommandHandler(name: string) {
-  const call = mockRegisterCommand.mock.calls.find(
-    (c: any[]) => c[0] === name
-  );
-  expect(call).toBeDefined(`Command ${name} was not registered`);
-  return call![1] as () => Promise<void>;
 }
 
 // ── Test helpers ───────────────────────────────────────────────────────────────
@@ -231,7 +209,7 @@ describe('VS Code Plugin - Core Integration', () => {
   });
 
   afterEach(() => {
-    vi.resetModules();
+    vi.clearAllMocks();
   });
 
   // ── Activation ─────────────────────────────────────────────────────────────
@@ -242,7 +220,7 @@ describe('VS Code Plugin - Core Integration', () => {
     expect(typeof mod.deactivate).toBe('function');
   });
 
-  it('should register all commands when activate is called', () => {
+  it('should register all commands when activate is called', async () => {
     await getExtension().activate(context);
 
     const registeredCommands = mockRegisterCommand.mock.calls.map(
@@ -267,12 +245,12 @@ describe('VS Code Plugin - Core Integration', () => {
     }
   });
 
-  it('should listen for configuration changes', () => {
+  it('should listen for configuration changes', async () => {
     await getExtension().activate(context);
     expect(mockOnDidChangeConfiguration).toHaveBeenCalled();
   });
 
-  it('should add all disposables to context.subscriptions', () => {
+  it('should add all disposables to context.subscriptions', async () => {
     await getExtension().activate(context);
 
     // 10 command registrations + 1 config change listener + 1 status bar = 12
@@ -281,7 +259,7 @@ describe('VS Code Plugin - Core Integration', () => {
 
   // ── Status Bar ─────────────────────────────────────────────────────────────
 
-  it('should create a status bar item on activation', () => {
+  it('should create a status bar item on activation', async () => {
     await getExtension().activate(context);
 
     expect(mockCreateStatusBarItem).toHaveBeenCalledWith(
@@ -291,7 +269,7 @@ describe('VS Code Plugin - Core Integration', () => {
     expect(mockStatusBarShow).toHaveBeenCalled();
   });
 
-  it('should set initial status bar text', () => {
+  it('should set initial status bar text', async () => {
     await getExtension().activate(context);
 
     // The status bar is created with default text
@@ -313,7 +291,7 @@ describe('VS Code Plugin - Core Integration', () => {
     );
   });
 
-  it('should dispose status bar on deactivate', () => {
+  it('should dispose status bar on deactivate', async () => {
     await getExtension().activate(context);
     await getExtension().deactivate();
 
@@ -627,9 +605,9 @@ describe('VS Code Plugin - Core Integration', () => {
 
   // ── deactivate ─────────────────────────────────────────────────────────────
 
-  it('should handle deactivate properly', () => {
+  it('should handle deactivate properly', async () => {
     await getExtension().activate(context);
-    expect(() => await getExtension().deactivate()).not.toThrow();
+    expect(() => getExtension().deactivate()).not.toThrow();
   });
 
   it('should call historyManager.close on deactivate', async () => {
@@ -662,7 +640,7 @@ describe('VS Code Plugin - Core Integration', () => {
 
   // ── Config refresh ─────────────────────────────────────────────────────────
 
-  it('should refresh config on settings change', () => {
+  it('should refresh config on settings change', async () => {
     await getExtension().activate(context);
 
     // Simulate a config change event
@@ -674,7 +652,7 @@ describe('VS Code Plugin - Core Integration', () => {
 
   // ── Step 14: UI Polish - Relative Timestamps, Hover Previews, Status Bar ──
 
-  it('should create status bar with initial text on activation', () => {
+  it('should create status bar with initial text on activation', async () => {
     await getExtension().activate(context);
 
     expect(mockCreateStatusBarItem).toHaveBeenCalled();
@@ -711,14 +689,14 @@ describe('VS Code Plugin - Core Integration', () => {
     expect(setTooltipCalls.length).toBeGreaterThan(0);
   });
 
-  it('should dispose status bar on deactivate', () => {
+  it('should dispose status bar on deactivate', async () => {
     await getExtension().activate(context);
     await getExtension().deactivate();
 
     expect(mockStatusBarDispose).toHaveBeenCalled();
   });
 
-  it('should update status bar with pinned count when clips are pinned', () => {
+  it('should update status bar with pinned count when clips are pinned', async () => {
     // Configure stats to include pinned count
     mockHistoryManager.getStats.mockReturnValue({
       totalClips: 5,
