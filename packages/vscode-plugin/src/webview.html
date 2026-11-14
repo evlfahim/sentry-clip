@@ -93,6 +93,7 @@
       cursor: pointer;
       border-left: 2px solid transparent;
       transition: background 0.1s;
+      position: relative;
     }
     .clip-item:hover { background: var(--hover); }
     .clip-item.selected { background: var(--active); border-left-color: var(--accent); }
@@ -111,15 +112,50 @@
     }
     .pin-btn:hover { background: rgba(255,255,255,0.1); }
     .pin-btn.pinned { color: var(--pin); }
-    .mask-badge {
-      display: inline-block;
-      background: var(--error);
-      color: white;
-      font-size: 9px;
-      padding: 1px 4px;
-      border-radius: 2px;
-      margin-left: 4px;
-      vertical-align: middle;
+
+    /* Hover preview tooltip */
+    .clip-item .hover-preview {
+      display: none;
+      position: absolute;
+      left: 0;
+      top: 100%;
+      z-index: 50;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 8px 10px;
+      max-width: 400px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      color: var(--fg);
+      pointer-events: none;
+    }
+    .clip-item:hover .hover-preview {
+      display: block;
+    }
+    .clip-item .hover-preview.above { top: auto; bottom: 100%; }
+    .hover-preview .preview-label {
+      font-size: 10px;
+      color: var(--fg2);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .hover-preview .preview-content {
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .hover-preview .preview-meta {
+      font-size: 10px;
+      color: var(--fg2);
+      margin-top: 4px;
+      border-top: 1px solid var(--border);
+      padding-top: 4px;
     }
 
     /* Empty state */
@@ -226,10 +262,6 @@
       white-space: pre-wrap; word-break: break-all; margin-top: 8px; color: var(--success);
     }
     .snippet-preview .unresolved { color: var(--error); }
-
-    /* Inline edit */
-    .inline-edit { display: none; }
-    .inline-edit.active { display: block; }
   </style>
 </head>
 <body>
@@ -352,21 +384,41 @@
       return r;
     }
 
+    function absoluteTime(c) {
+      const d = new Date(c.createdAt);
+      return isNaN(d.getTime()) ? '' : d.toLocaleString();
+    }
+
+    function previewMeta(c) {
+      return esc(c.relativeTime || '') + (c.pinned ? ' · 📌 Pinned' : '') + ' · ' + c.content.length + ' chars';
+    }
+
     function render() {
       const items = filtered();
       if (items.length === 0) {
         document.getElementById('clipList').innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div>' + (search ? 'No matching clips' : 'No clipboard history') + '</div></div>';
       } else {
-        document.getElementById('clipList').innerHTML = items.map(c =>
-          '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + c.id + '">' +
+        document.getElementById('clipList').innerHTML = items.map(c => {
+          const previewContent = c.content.length > 300 ? c.content.substring(0, 300) + '…' : c.content;
+          return '<div class="clip-item ' + (c.pinned ? 'pinned' : '') + (selectedId === c.id ? ' selected' : '') + '" data-id="' + esc(c.id) + '">' +
             '<div class="clip-info">' +
               '<div class="clip-text">' + esc(c.content) + '</div>' +
-              '<div class="clip-meta">' + (c.relativeTime || '') + '</div>' +
+              '<div class="clip-meta" title="' + esc(absoluteTime(c)) + '">' + esc(c.relativeTime || '') + '</div>' +
             '</div>' +
-            '<button class="pin-btn ' + (c.pinned ? 'pinned' : '') + '" data-pin="' + c.id + '">' + (c.pinned ? '★' : '☆') + '</button>' +
-          '</div>'
-        ).join('');
+            '<button class="pin-btn ' + (c.pinned ? 'pinned' : '') + '" data-pin="' + esc(c.id) + '" title="' + (c.pinned ? 'Unpin' : 'Pin') + '">' + (c.pinned ? '★' : '☆') + '</button>' +
+            '<div class="hover-preview">' +
+              '<div class="preview-label">Full Content</div>' +
+              '<div class="preview-content">' + esc(previewContent) + '</div>' +
+              '<div class="preview-meta">' + previewMeta(c) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
         document.getElementById('clipList').querySelectorAll('.clip-item').forEach(el => {
+          // Flip the preview above the item when it would run off the bottom
+          el.addEventListener('mouseenter', () => {
+            const preview = el.querySelector('.hover-preview');
+            if (preview) preview.classList.toggle('above', el.getBoundingClientRect().bottom + 200 > window.innerHeight);
+          });
           el.addEventListener('click', (e) => {
             if (e.target.classList.contains('pin-btn')) return;
             selectedId = el.dataset.id;
@@ -452,7 +504,6 @@
         list.querySelectorAll('[data-del-rule]').forEach(btn => {
           btn.addEventListener('click', function() {
             vsc.postMessage({ type: 'deleteMaskRule', ruleId: this.dataset.delRule });
-            vsc.postMessage({ type: 'refresh' });
           });
         });
 
@@ -544,7 +595,6 @@
               editingSnippetId = null;
               document.getElementById('snippetEditor').style.display = 'none';
             }
-            vsc.postMessage({ type: 'refresh' });
           });
         });
       }
@@ -568,7 +618,6 @@
     }
 
     function updateSnippetPreview() {
-      const name = document.getElementById('editSnippetName').value.trim();
       const content = document.getElementById('editSnippetContent').value;
       const preview = document.getElementById('snippetPreview');
       const phContainer = document.getElementById('snippetPlaceholders');
@@ -586,14 +635,8 @@
         : '<span style="color: var(--fg2); font-size: 11px;">No placeholders detected</span>';
 
       // Preview with resolution simulation
-      let previewText = content;
-      let resolved = false;
       const phRegex2 = /\{\{(\w+)\}\}/g;
-      previewText = content.replace(phRegex2, (match, name) => {
-        resolved = true;
-        if (builtinPlaceholders.some(p => p.name === name)) {
-          return '<span class="unresolved">[' + name + ']</span>';
-        }
+      const previewText = esc(content).replace(phRegex2, (match, name) => {
         return '<span class="unresolved">[' + name + ']</span>';
       });
 
@@ -625,7 +668,6 @@
       vsc.postMessage({ type: 'saveSnippet', snippetId: editingSnippetId, name: name, content: content });
       editingSnippetId = null;
       document.getElementById('snippetEditor').style.display = 'none';
-      vsc.postMessage({ type: 'refresh' });
       showToast('Snippet saved');
     });
 
@@ -641,7 +683,6 @@
         vsc.postMessage({ type: 'deleteSnippet', snippetId: editingSnippetId });
         editingSnippetId = null;
         document.getElementById('snippetEditor').style.display = 'none';
-        vsc.postMessage({ type: 'refresh' });
         showToast('Snippet deleted');
       }
     });
@@ -655,7 +696,37 @@
       setTimeout(function() { toastEl.classList.remove('show'); }, 2000);
     }
 
+    // ── Relative timestamp auto-refresh ──
+    // Ask the extension for fresh relative times every 30 seconds
+    let timestampInterval = null;
+
+    function startTimestampRefresh() {
+      if (timestampInterval) clearInterval(timestampInterval);
+      timestampInterval = setInterval(function() {
+        vsc.postMessage({ type: 'requestTimestamps' });
+      }, 30000);
+    }
+
+    function stopTimestampRefresh() {
+      if (timestampInterval) { clearInterval(timestampInterval); timestampInterval = null; }
+    }
+
+    // Patch only the time labels so an open hover preview is not torn down
+    function applyTimestamps() {
+      document.getElementById('clipList').querySelectorAll('.clip-item').forEach(function(el) {
+        const c = clips.find(function(x) { return x.id === el.dataset.id; });
+        if (!c) return;
+        const meta = el.querySelector('.clip-meta');
+        if (meta) meta.textContent = c.relativeTime || '';
+        const pm = el.querySelector('.preview-meta');
+        if (pm) pm.innerHTML = previewMeta(c);
+      });
+    }
+
     // ── Message handling ──
+    // The one and only message listener. 'init'/'update' only re-render the
+    // lists from data; they never reload the page or ask for more data, so
+    // there is no request/response loop with the extension.
     window.addEventListener('message', function(e) {
       var m = e.data;
       if (m.type === 'init') {
@@ -666,28 +737,41 @@
         render();
         renderMaskRules();
         renderSnippets();
+        startTimestampRefresh();
       }
       else if (m.type === 'update') {
         clips = m.clips || clips;
         render();
+        startTimestampRefresh();
       }
       else if (m.type === 'clear') {
         clips = [];
         render();
+        stopTimestampRefresh();
       }
       else if (m.type === 'toast') {
         showToast(m.message, m.level);
       }
       else if (m.type === 'maskPreview') {
-        const output = document.getElementById('previewOutput');
-        output.innerHTML = m.preview || 'No masking applied';
+        document.getElementById('previewOutput').textContent = m.preview || 'No masking applied';
       }
-      else if (m.type === 'refresh') {
-        vsc.postMessage({ type: 'requestInit' });
+      else if (m.type === 'updateTimestamps') {
+        clips.forEach(function(c) {
+          if (m.timestamps && m.timestamps[c.id]) {
+            c.relativeTime = m.timestamps[c.id];
+          }
+        });
+        applyTimestamps();
       }
     });
 
-    vsc.postMessage({ type: 'requestInit' });
+    window.addEventListener('beforeunload', stopTimestampRefresh);
+
+    // Initial render
+    render();
+    renderMaskRules();
+    renderSnippets();
+    startTimestampRefresh();
   </script>
 </body>
 </html>
