@@ -16,6 +16,7 @@ const mockStatusBarShow = vi.fn();
 const mockStatusBarDispose = vi.fn();
 const mockStatusBarSetText = vi.fn();
 const mockStatusBarSetTooltip = vi.fn();
+const mockCreateWebviewPanel = vi.fn();
 
 const mockActiveTextEditor = {
   selection: { isEmpty: false },
@@ -25,6 +26,9 @@ const mockActiveTextEditor = {
 vi.mock('vscode', () => ({
   StatusBarAlignment: { Right: 1 },
   ViewColumn: { Two: 2 },
+  Uri: { file: (p: string) => ({ fsPath: p }) },
+  WebviewPanel: {},
+  Disposable: class Disposable { dispose() {} },
   window: {
     showInformationMessage: (...args: any[]) => {
       mockShowInformationMessage(...args);
@@ -63,6 +67,9 @@ vi.mock('vscode', () => ({
       mockCreateStatusBarItem(...args);
       return statusBar;
     },
+    createWebviewPanel: (...args: any[]) => {
+      return mockCreateWebviewPanel(...args);
+    },
   },
   commands: {
     registerCommand: (...args: any[]) => {
@@ -89,32 +96,44 @@ vi.mock('vscode', () => ({
   },
 }));
 
-// ── Mocks for @sentry-clip/core ───────────────────────────────────────────────
+// ── Mocks for @sentry-clip/core (hoisted so they survive module resets) ────────
 
-const mockHistoryManager = {
-  getClips: vi.fn(),
-  getPinnedClips: vi.fn(),
-  searchClips: vi.fn(),
-  togglePin: vi.fn(),
-  getRelativeTime: vi.fn(),
-  getStats: vi.fn(),
-  clearHistory: vi.fn(),
-  getAllSnippets: vi.fn(),
-  addClip: vi.fn(),
-  close: vi.fn(),
-  setConfig: vi.fn(),
-};
-
-const mockSnippetEngine = {
-  getSnippets: vi.fn(),
-  resolvePlaceholders: vi.fn(),
-};
+const { mockHistoryManager, mockSnippetEngine, mockMaskEngine } = vi.hoisted(() => {
+  return {
+    mockHistoryManager: {
+      getClips: vi.fn(),
+      getPinnedClips: vi.fn(),
+      searchClips: vi.fn(),
+      togglePin: vi.fn(),
+      getRelativeTime: vi.fn(),
+      getStats: vi.fn(),
+      clearHistory: vi.fn(),
+      getAllSnippets: vi.fn(),
+      addClip: vi.fn(),
+      close: vi.fn(),
+      setConfig: vi.fn(),
+    },
+    mockSnippetEngine: {
+      getSnippets: vi.fn(),
+      resolvePlaceholders: vi.fn(),
+    },
+    mockMaskEngine: {
+      addRule: vi.fn(),
+      removeRule: vi.fn(),
+      getRules: vi.fn(),
+      mask: vi.fn(),
+      maskPreview: vi.fn(),
+    },
+  };
+});
 
 vi.mock('@sentry-clip/core', () => ({
   HistoryManager: vi.fn().mockImplementation(() => mockHistoryManager),
   SnippetEngine: vi.fn().mockImplementation(() => mockSnippetEngine),
+  MaskEngine: vi.fn().mockImplementation(() => mockMaskEngine),
   Clip: {},
   Snippet: {},
+  MaskRule: {},
 }));
 
 // Import after mocking — use dynamic import so modules are reloaded between tests
@@ -164,7 +183,8 @@ describe('VS Code Plugin - Core Integration', () => {
     createdAt: Date.now(),
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     vi.clearAllMocks();
 
     // Default config
