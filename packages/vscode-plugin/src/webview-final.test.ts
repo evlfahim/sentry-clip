@@ -389,6 +389,23 @@ describe('Final UI Polish - Relative Timestamps, Hover Previews, Status Bar', ()
       expect(html).toContain('relativeTime');
     });
 
+    it('should format relative times in the webview script without TypeScript syntax', async () => {
+      const mgr = new webviewModule.WebviewManager({
+        historyManager: mockHistoryManager,
+        extensionUri: context.extensionUri,
+      });
+      mgr.show();
+
+      const html = mockPanel.getCapturedHtml();
+      expect(html).toContain('function formatRelative(ts)');
+      expect(html).toContain("type: 'requestTimestamps'");
+      expect(html).toContain("m.type === 'updateTimestamps'");
+      expect(html).toContain('visibilitychange');
+      // Browser script must be plain JS: no type annotations
+      expect(html).not.toContain('ReturnType<');
+      expect(html).not.toMatch(/let \w+\s*:\s*\w+/);
+    });
+
     it('should handle timestamp updates for clips with same id', async () => {
       const mgr = new webviewModule.WebviewManager({
         historyManager: mockHistoryManager,
