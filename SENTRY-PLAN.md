@@ -44,6 +44,6 @@ Core logic resides in `@sentry-clip/core` (pure Node.js/TS). The VS Code plugin 
 - [x] 13. Map VS Code settings to core configuration, test dynamic updates via `npm run vscode:test-config`
 - [!] 14. Fix Webview message handling and data flow: Remove duplicate message listeners, fix the infinite reload loop by ensuring initial data is sent correctly without triggering a page rebuild, and fix the unsafe content policy header in `packages/vscode-plugin/src/webview.ts`.
 - [x] 15. Implement relative timestamps and hover previews: Add `requestTimestamps` handler in the extension, fix the browser-side TypeScript syntax error in the webview script, and implement the relative time formatting and hover tooltip logic in the Webview UI.
-- [ ] 16. Add status bar integration and final UI polish: Create the status bar item to show clipboard status, integrate it with the core history manager, and ensure all UI elements (masking preview, snippet placeholders) render correctly with proper escaping.
+- [x] 16. Add status bar integration and final UI polish: Create the status bar item to show clipboard status, integrate it with the core history manager, and ensure all UI elements (masking preview, snippet placeholders) render correctly with proper escaping.
 - [ ] 17. Verify final UI via `npm run vscode:test-ui-final`: Run the final verification script to ensure all UI components, interactions, and integrations work as expected.
 - [ ] 18. Write README with run instructions, feature list, and step-by-step guide to convert core into a standalone desktop plugin
